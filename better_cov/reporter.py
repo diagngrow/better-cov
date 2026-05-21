@@ -1,0 +1,151 @@
+"""Console report and JSON export for weighted coverage score."""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+
+from better_cov.scorer import WeightedCoverageResult
+
+
+_BAR_WIDTH = 20
+_TOP_N = 10
+
+
+def _coverage_bar(rate: float, width: int = _BAR_WIDTH) -> str:
+    """Generates an ASCII bar representing the coverage rate."""
+    filled = round(rate * width)
+    empty = width - filled
+    return f"[{'█' * filled}{'░' * empty}]"
+
+
+def _color(text: str, code: str) -> str:
+    """Wraps text with an ANSI code if the terminal supports it."""
+    return f"\033[{code}m{text}\033[0m"
+
+
+def _score_color(score_pct: float) -> str:
+    """Returns an ANSI color code based on the score."""
+    if score_pct >= 80:
+        return "32"
+    if score_pct >= 50:
+        return "33"
+    return "31"
+
+
+def print_report(result: WeightedCoverageResult, top_n: int = _TOP_N) -> None:
+    """Displays the weighted coverage report in the console."""
+    sep = "─" * 72
+
+    print()
+    print(_color("  Weighted Coverage Report", "1"))
+    print(sep)
+
+    score_str = f"{result.global_score_pct:.1f}%"
+    raw_str = f"{result.raw_coverage * 100:.1f}%"
+    color = _score_color(result.global_score_pct)
+
+    print(
+        f"  {'Weighted score':<20} {_color(score_str, color)} "
+        f" {_coverage_bar(result.global_score)}"
+    )
+    print(
+        f"  {'Raw coverage':<20} {raw_str:<8} "
+        f" {_coverage_bar(result.raw_coverage)}"
+    )
+    diff = result.global_score_pct - result.raw_coverage * 100
+    diff_str = f"{diff:+.1f}%"
+    print(f"  {'Difference':<20} {diff_str}")
+    print()
+    print(f"  Indicators : {', '.join(result.indicators) or 'none'}")
+    print(f"  Functions  : {result.total_functions}")
+    print(sep)
+
+    if result.functions:
+        top = result.functions[:top_n]
+        print()
+        print(
+            _color(
+                f"  Top {min(top_n, len(top))} most important functions",
+                "1",
+            )
+        )
+        print()
+
+        header = (
+            f"  {'File':<35} {'Function':<30} {'Coverage':>9}  {'Importance':>10}"
+        )
+        print(_color(header, "2"))
+        print("  " + "·" * 68)
+
+        for fs in top:
+            short_file = fs.file
+            if len(short_file) > 33:
+                short_file = "…" + short_file[-32:]
+            short_func = fs.function
+            if len(short_func) > 28:
+                short_func = short_func[:27] + "…"
+            cov_str = f"{fs.line_rate * 100:.1f}%"
+            cov_color = _score_color(fs.line_rate * 100)
+            imp_str = f"{fs.importance:.3f}"
+            print(
+                f"  {short_file:<35} {short_func:<30} "
+                f"{_color(cov_str, cov_color):>9}  {imp_str:>10}"
+            )
+
+    print()
+    print(sep)
+    print()
+
+
+def export_json(result: WeightedCoverageResult, output_path: str | Path) -> None:
+    """Exports the complete result to JSON format.
+
+    Structure:
+    {
+        "generated_at": "<ISO timestamp>",
+        "score": { "weighted_pct": ..., "raw_pct": ... },
+        "config": { "source_dirs": [...], "indicators": [...] },
+        "functions": [
+            {
+                "file": ..., "function": ..., "line_rate": ...,
+                "lines_covered": ..., "lines_total": ...,
+                "importance": ..., "indicator_scores": {...}
+            },
+            ...
+        ]
+    }
+    """
+    data = {
+        "generated_at": datetime.now(tz=UTC).isoformat(),
+        "score": {
+            "weighted_pct": result.global_score_pct,
+            "weighted": result.global_score,
+            "raw_pct": round(result.raw_coverage * 100, 2),
+            "raw": result.raw_coverage,
+            "diff_pct": round(result.global_score_pct - result.raw_coverage * 100, 2),
+        },
+        "config": {
+            "source_dirs": result.source_dirs,
+            "indicators": result.indicators,
+            "total_functions": result.total_functions,
+        },
+        "functions": [
+            {
+                "file": fs.file,
+                "function": fs.function,
+                "line_rate": fs.line_rate,
+                "lines_covered": fs.lines_covered,
+                "lines_total": fs.lines_total,
+                "importance": fs.importance,
+                "weighted_contribution": fs.weighted_contribution,
+                "indicator_scores": fs.indicator_scores,
+            }
+            for fs in result.functions
+        ],
+    }
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

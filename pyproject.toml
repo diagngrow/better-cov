@@ -1,0 +1,17 @@
+[project]
+name = "better-cov"
+version = "0.1.0"
+description = "Coverage score weighted by function importance"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+better-cov = "better_cov.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["better_cov"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
