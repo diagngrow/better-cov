@@ -1,5 +1,9 @@
 # better-cov
 
+[![PyPI version](https://badge.fury.io/py/better-cov.svg)](https://pypi.org/project/better-cov/)
+[![Python](https://img.shields.io/pypi/pyversions/better-cov.svg)](https://pypi.org/project/better-cov/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 **Coverage score weighted by function importance.**
 
 Standard line coverage treats every function equally. `better-cov` gives a higher weight to functions that are actually used — measured by how often they are imported across your codebase — so the score reflects what matters most.
@@ -19,9 +23,14 @@ weighted_score = Σ(line_rate_i × importance_i) / Σ(importance_i)
 ## Installation
 
 ```bash
+# Via pip (recommandé)
 pip install better-cov
-# or with uv
+
+# Via uv
 uv add better-cov
+
+# Via pipx (CLI isolé)
+pipx install better-cov
 ```
 
 ## Quick start
@@ -63,13 +72,30 @@ usage: better_cov [-h] [--coverage-xml PATH] [--source-dirs DIR [DIR ...]]
 
 ## CI integration
 
+### GitHub Action (recommended)
+
 ```yaml
-# GitHub Actions example
 - name: Run tests with coverage
   run: pytest --cov=src --cov-report=xml
 
 - name: Check weighted coverage
-  run: better-cov --coverage-xml coverage.xml --source-dirs src/ --min-score 60
+  uses: diagngrow/better-cov@main
+  with:
+    coverage-xml: coverage.xml
+    source-dirs: src/
+    min-score: 60
+```
+
+### Manual install
+
+```yaml
+- name: Run tests with coverage
+  run: pytest --cov=src --cov-report=xml
+
+- name: Check weighted coverage
+  run: |
+    pip install better-cov
+    better-cov --coverage-xml coverage.xml --source-dirs src/ --min-score 60
 ```
 
 Exit codes: `0` = success, `1` = below threshold, `2` = input file not found.

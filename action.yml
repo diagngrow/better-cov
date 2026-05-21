@@ -1,0 +1,45 @@
+name: "Better Coverage"
+description: "Compute weighted coverage score based on function importance"
+author: "Geoffrey Pruvost"
+branding:
+  icon: "check-circle"
+  color: "green"
+
+inputs:
+  coverage-xml:
+    description: "Path to coverage.xml file"
+    required: false
+    default: "coverage.xml"
+  source-dirs:
+    description: "Source directories to scan (space-separated)"
+    required: false
+    default: "src/"
+  min-score:
+    description: "Minimum score threshold (fails if below)"
+    required: false
+    default: ""
+  output:
+    description: "Output JSON file path"
+    required: false
+    default: "better_cov.json"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install better-cov
+      shell: bash
+      run: pip install better-cov
+    - name: Run better-cov
+      shell: bash
+      run: |
+        ARGS="--coverage-xml ${{ inputs.coverage-xml }} --source-dirs ${{ inputs.source-dirs }} --output ${{ inputs.output }}"
+        if [ -n "${{ inputs.min-score }}" ]; then
+          ARGS="$ARGS --min-score ${{ inputs.min-score }}"
+        fi
+        better-cov $ARGS
+    - name: Upload result
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: better-cov-report
+        path: ${{ inputs.output }}
