@@ -21,7 +21,7 @@ from pathlib import Path
 
 from better_cov.indicators.import_count import ImportCountIndicator
 from better_cov.parsers.cobertura import parse_coverage_xml
-from better_cov.reporter import export_json, print_report
+from better_cov.reporter import export_json, export_markdown, print_report
 from better_cov.scorer import IndicatorConfig, compute_weighted_coverage
 
 
@@ -86,6 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="Number of functions to display in the console report (default: 10)",
     )
+    parser.add_argument(
+        "--markdown-output",
+        default=None,
+        metavar="PATH",
+        help="Optional path to write a Markdown report (e.g. better_cov.md) for PR comments",
+    )
     return parser
 
 
@@ -141,6 +147,10 @@ def main(argv: list[str] | None = None) -> int:
     print_report(result, top_n=args.top_n)
     export_json(result, args.output)
     print(f"  Result exported → {args.output}")
+
+    if args.markdown_output is not None:
+        export_markdown(result, args.markdown_output, top_n=args.top_n)
+        print(f"  Markdown report → {args.markdown_output}")
     print()
 
     if args.min_score is not None and result.global_score_pct < args.min_score:
