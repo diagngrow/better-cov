@@ -1,8 +1,8 @@
 version = 1
 revision = 1
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 
 [[package]]
 name = "better-cov"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
