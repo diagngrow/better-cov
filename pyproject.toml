@@ -22,7 +22,11 @@ authors = [{ name = "Geoffrey Pruvost" }]
 urls.Homepage = "https://github.com/diagngrow/better-cov"
 urls.Repository = "https://github.com/diagngrow/better-cov"
 urls.Issues = "https://github.com/diagngrow/better-cov/issues"
-dependencies = []
+dependencies = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.5",
+]
 
 [project.scripts]
 better-cov = "better_cov.cli:main"

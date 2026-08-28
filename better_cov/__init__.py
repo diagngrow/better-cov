@@ -5,7 +5,7 @@ from better_cov.scorer import WeightedCoverageResult, compute_weighted_coverage
 
 __all__ = [
     "FunctionCoverage",
-    "parse_coverage_xml",
     "WeightedCoverageResult",
     "compute_weighted_coverage",
+    "parse_coverage_xml",
 ]

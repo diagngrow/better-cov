@@ -8,7 +8,6 @@ from pathlib import Path
 
 from better_cov.scorer import WeightedCoverageResult
 
-
 _BAR_WIDTH = 20
 _TOP_N = 10
 

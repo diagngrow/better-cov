@@ -17,7 +17,6 @@ from pathlib import Path
 
 from better_cov.indicators.base import ImportanceIndicator
 
-
 _FROM_IMPORT_RE = re.compile(
     r"^\s*from\s+([\w.]+)\s+import\s+(.+)$",
     re.MULTILINE,
