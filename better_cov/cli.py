@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 from better_cov.indicators.import_count import ImportCountIndicator
+from better_cov.languages.registry import LANGUAGE_NAMES
 from better_cov.parsers.cobertura import parse_coverage_xml
 from better_cov.reporter import export_json, export_markdown, print_report
 from better_cov.scorer import IndicatorConfig, compute_weighted_coverage
@@ -36,8 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PROJECT_DIR",
         help=(
-            "Optional project root directory. When provided, --coverage-xml defaults to "
-            "<PROJECT_DIR>/coverage.xml and --source-dirs defaults to <PROJECT_DIR>/src/."
+            "Optional project root directory. Auto-detects coverage.xml or "
+            "coverage/cobertura-coverage.xml and source directories below PROJECT_DIR."
         ),
     )
     parser.add_argument(
@@ -52,6 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=["src/"],
         metavar="DIR",
         help="Directories to scan for computing importance (default: src/)",
+    )
+    parser.add_argument(
+        "--language",
+        choices=LANGUAGE_NAMES,
+        default="auto",
+        help="Source language (default: auto-detect from file extensions)",
     )
     parser.add_argument(
         "--output",
@@ -103,14 +110,22 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
     parser = build_parser()
     defaults = parser.parse_args([])
     if args.coverage_xml == defaults.coverage_xml:
-        candidate = root / "coverage.xml"
-        args.coverage_xml = str(candidate)
+        candidates = [root / "coverage.xml", root / "coverage" / "cobertura-coverage.xml"]
+        args.coverage_xml = str(next((path for path in candidates if path.is_file()), candidates[0]))
     if args.source_dirs == defaults.source_dirs:
         direct = root / "src"
         if direct.is_dir():
             args.source_dirs = [str(direct)]
         else:
-            found = sorted(str(p) for p in root.rglob("src") if p.is_dir())
+            found = sorted(
+                str(path)
+                for path in root.rglob("src")
+                if path.is_dir()
+                and not any(
+                    part in {".git", ".venv", "node_modules"}
+                    for part in path.parts
+                )
+            )
             args.source_dirs = found if found else [str(direct)]
     return args
 
@@ -122,7 +137,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _resolve_args(args)
 
     try:
-        functions = parse_coverage_xml(args.coverage_xml, source_roots=args.source_dirs)
+        functions = parse_coverage_xml(
+            args.coverage_xml,
+            source_roots=args.source_dirs,
+            language=args.language,
+        )
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
@@ -134,7 +153,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     indicators = [
-        IndicatorConfig(indicator=ImportCountIndicator(), weight=1.0),
+        IndicatorConfig(
+            indicator=ImportCountIndicator(language=args.language),
+            weight=1.0,
+        ),
     ]
 
     result = compute_weighted_coverage(

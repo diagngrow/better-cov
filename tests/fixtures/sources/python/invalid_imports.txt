@@ -1,0 +1,2 @@
+from package.module import first as alias, second
+def broken(:

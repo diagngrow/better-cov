@@ -14,6 +14,10 @@ inputs:
     description: "Source directories to scan (space-separated)"
     required: false
     default: "src/"
+  language:
+    description: "Source language: auto, python, javascript, or typescript"
+    required: false
+    default: "auto"
   min-score:
     description: "Minimum score threshold (fails if below)"
     required: false
@@ -40,7 +44,7 @@ runs:
     - name: Run better-cov
       shell: bash
       run: |
-        ARGS="--coverage-xml ${{ inputs.coverage-xml }} --source-dirs ${{ inputs.source-dirs }} --output ${{ inputs.output }} --top-n ${{ inputs.top-n }}"
+        ARGS="--coverage-xml ${{ inputs.coverage-xml }} --source-dirs ${{ inputs.source-dirs }} --language ${{ inputs.language }} --output ${{ inputs.output }} --top-n ${{ inputs.top-n }}"
         if [ -n "${{ inputs.min-score }}" ]; then
           ARGS="$ARGS --min-score ${{ inputs.min-score }}"
         fi

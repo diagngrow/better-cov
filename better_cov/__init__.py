@@ -1,6 +1,7 @@
 """better-cov — Global coverage weighted by function importance."""
 
-from better_cov.parsers.cobertura import FunctionCoverage, parse_coverage_xml
+from better_cov.models import FunctionCoverage
+from better_cov.parsers.cobertura import parse_coverage_xml
 from better_cov.scorer import WeightedCoverageResult, compute_weighted_coverage
 
 __all__ = [

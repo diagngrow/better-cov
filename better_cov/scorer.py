@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from better_cov.indicators.base import ImportanceIndicator
-from better_cov.parsers.cobertura import FunctionCoverage
+from better_cov.models import FunctionCoverage
 
 
 @dataclass
@@ -156,31 +156,37 @@ def compute_weighted_coverage(
 
 
 def _lookup_score(file_path: str, scores: dict[str, float], function: str = "") -> float:
-    """Looks up the score of a function in a scores dict.
+    """Looks up symbol, containing class, and file scores across path variants."""
+    normalized_file = file_path.replace("\\", "/")
+    symbols = [function] if function else []
+    if "." in function:
+        symbols.append(function.rsplit(".", 1)[0])
 
-    Resolution order:
-    1. Exact key ``file_path::function`` (per-symbol indicators).
-    2. Exact key ``file_path`` alone (per-file indicators, backward compat).
-    3. Suffix match on both forms (relative/absolute paths).
-    """
-    if function:
-        exact_sym = f"{file_path}::{function}"
-        if exact_sym in scores:
-            return scores[exact_sym]
-
+    for symbol in symbols:
+        exact_keys = (f"{file_path}::{symbol}", f"{normalized_file}::{symbol}")
+        for exact_key in exact_keys:
+            if exact_key in scores:
+                return scores[exact_key]
         for key, value in scores.items():
-            if "::" in key:
-                file_part, sym_part = key.rsplit("::", 1)
-                if sym_part == function and (
-                    file_part.endswith(file_path) or file_path.endswith(file_part)
-                ):
-                    return value
+            if "::" not in key:
+                continue
+            file_part, symbol_part = key.rsplit("::", 1)
+            normalized_part = file_part.replace("\\", "/")
+            if symbol_part == symbol and (
+                normalized_part.endswith(normalized_file)
+                or normalized_file.endswith(normalized_part)
+            ):
+                return value
 
-    if file_path in scores:
-        return scores[file_path]
-
+    for exact_key in (file_path, normalized_file):
+        if exact_key in scores:
+            return scores[exact_key]
     for key, value in scores.items():
-        if "::" not in key and (key.endswith(file_path) or file_path.endswith(key)):
+        normalized_key = key.replace("\\", "/")
+        if "::" not in key and (
+            normalized_key.endswith(normalized_file)
+            or normalized_file.endswith(normalized_key)
+        ):
             return value
 
     return 0.0
