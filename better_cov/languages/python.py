@@ -68,8 +68,8 @@ def _extract_import_pairs_regex(source: str) -> list[ImportReference]:
         level = len(raw_module) - len(raw_module.lstrip("."))
         module = raw_module[level:]
         symbols = match.group(2).strip().strip("()")
-        for symbol in symbols.split(","):
-            symbol = symbol.strip().split(" as ")[0].strip()
+        for raw_symbol in symbols.split(","):
+            symbol = raw_symbol.strip().split(" as ")[0].strip()
             if symbol:
                 references.append(_from_import_reference(module, symbol, level))
     return references

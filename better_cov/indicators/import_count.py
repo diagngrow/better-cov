@@ -13,7 +13,7 @@ from better_cov.languages.registry import detect_language_adapter, get_language_
 class ImportCountIndicator(ImportanceIndicator):
     """Compute importance from imports resolved by source-language adapters."""
 
-    def __init__(self, language: str) -> None:
+    def __init__(self, language: str = "auto") -> None:
         self.language = language
 
     @property

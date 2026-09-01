@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 from better_cov.languages.typescript_config import TypeScriptConfigResolver
@@ -113,7 +114,10 @@ def test_config_discovery_is_cached(tmp_path: Path, monkeypatch) -> None:
     original_walk = os.walk
     walk_calls = 0
 
-    def counting_walk(*args, **kwargs):
+    def counting_walk(
+        *args: object,
+        **kwargs: object,
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
         nonlocal walk_calls
         walk_calls += 1
         return original_walk(*args, **kwargs)

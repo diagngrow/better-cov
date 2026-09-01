@@ -1,8 +1,6 @@
 from pathlib import Path
 from typing import NoReturn
 
-import pytest
-
 from better_cov.indicators.import_count import ImportCountIndicator
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -72,10 +70,9 @@ def test_compute_counts_direct_and_relative_python_imports(tmp_path) -> None:
     }
 
 
-def test_language_is_required() -> None:
-    """Verify the source language must be selected explicitly."""
-    with pytest.raises(TypeError):
-        ImportCountIndicator()
+def test_language_defaults_to_auto() -> None:
+    """Verify callers can omit the source language for automatic detection."""
+    assert ImportCountIndicator().language == "auto"
 
 
 def test_indicator_name_and_empty_normalization() -> None:
