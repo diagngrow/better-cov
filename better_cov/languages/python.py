@@ -6,7 +6,12 @@ import ast
 import re
 from pathlib import Path
 
-from better_cov.languages.base import FunctionRange, ImportReference, LanguageAdapter
+from better_cov.languages.base import (
+    FunctionRange,
+    ImportReference,
+    LanguageAdapter,
+    source_file_index,
+)
 
 _FROM_IMPORT_RE = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+(.+)$", re.MULTILINE)
 
@@ -42,32 +47,51 @@ class _FunctionRangeVisitor(ast.NodeVisitor):
         self._visit_function(node)
 
 
-def _extract_import_pairs_regex(source: str) -> list[tuple[str, str]]:
-    """Extract from-import pairs with a regular-expression fallback."""
-    pairs: list[tuple[str, str]] = []
+def _from_import_reference(
+    module: str,
+    symbol: str,
+    level: int,
+) -> ImportReference:
+    """Build a symbol or sibling-module reference from a from-import."""
+    if module:
+        return ImportReference(module, (symbol,), level)
+    if symbol == "*":
+        return ImportReference("", (symbol,), level)
+    return ImportReference(symbol, level=level)
+
+
+def _extract_import_pairs_regex(source: str) -> list[ImportReference]:
+    """Extract from-import references with a regular-expression fallback."""
+    references: list[ImportReference] = []
     for match in _FROM_IMPORT_RE.finditer(source):
-        module = match.group(1).strip()
+        raw_module = match.group(1).strip()
+        level = len(raw_module) - len(raw_module.lstrip("."))
+        module = raw_module[level:]
         symbols = match.group(2).strip().strip("()")
         for symbol in symbols.split(","):
             symbol = symbol.strip().split(" as ")[0].strip()
-            if symbol and symbol != "*":
-                pairs.append((module, symbol))
-    return pairs
+            if symbol:
+                references.append(_from_import_reference(module, symbol, level))
+    return references
 
 
-def _extract_import_pairs(source: str) -> list[tuple[str, str]]:
-    """Extract from-import pairs using the AST or regex fallback."""
+def _extract_import_pairs(source: str) -> list[ImportReference]:
+    """Extract import references using the AST or regex fallback."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return _extract_import_pairs_regex(source)
-    return [
-        (node.module, alias.name)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module
-        for alias in node.names
-        if alias.name != "*"
-    ]
+    references: list[ImportReference] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            references.extend(ImportReference(alias.name) for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            references.extend(
+                _from_import_reference(module, alias.name, node.level)
+                for alias in node.names
+            )
+    return references
 
 
 class PythonLanguageAdapter(LanguageAdapter):
@@ -94,10 +118,7 @@ class PythonLanguageAdapter(LanguageAdapter):
 
     def extract_imports(self, source: str, suffix: str) -> list[ImportReference]:
         """Extract imported symbols from Python source."""
-        return [
-            ImportReference(module=module, symbols=(symbol,))
-            for module, symbol in _extract_import_pairs(source)
-        ]
+        return _extract_import_pairs(source)
 
     def resolve_import(
         self,
@@ -107,9 +128,31 @@ class PythonLanguageAdapter(LanguageAdapter):
         source_dirs: list[Path],
     ) -> Path | None:
         """Resolve a Python module against the scanned source files."""
+        relative_level = len(module) - len(module.lstrip("."))
+        module_name = module[relative_level:]
+        if relative_level:
+            target = importer.parent
+            for _ in range(relative_level - 1):
+                target = target.parent
+            if module_name:
+                target = target.joinpath(*module_name.split("."))
+            files = source_file_index(source_files)
+            candidates = (
+                (target.with_suffix(".py"), target / "__init__.py")
+                if module_name
+                else (target / "__init__.py",)
+            )
+            return next(
+                (
+                    files[normalized]
+                    for candidate in candidates
+                    if (normalized := candidate.resolve(strict=False)) in files
+                ),
+                None,
+            )
         candidates = (
-            f"{module.replace('.', '/')}.py",
-            f"{module.replace('.', '/')}/__init__.py",
+            f"{module_name.replace('.', '/')}.py",
+            f"{module_name.replace('.', '/')}/__init__.py",
         )
         index: dict[str, Path] = {}
         for source_file in source_files:

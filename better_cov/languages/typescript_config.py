@@ -7,6 +7,8 @@ from typing import cast
 
 import json5
 
+from better_cov.languages.base import source_file_index
+
 _EXTENSIONS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 _EXTENSION_REPLACEMENTS = {
     ".js": (".ts", ".tsx", ".js", ".jsx"),
@@ -28,12 +30,17 @@ class _Config:
     base_url: Path | None = None
     paths: tuple[_PathRule, ...] = ()
     references: tuple[Path, ...] = ()
+    defines_base_url: bool = False
+    defines_paths: bool = False
 
 
 class TypeScriptConfigResolver:
     def __init__(self) -> None:
         """Initialize the resolver and its parsed-config cache."""
         self._cache: dict[Path, tuple[tuple[int, int], dict[str, object] | None]] = {}
+        self._config_paths_cache: dict[
+            tuple[Path, tuple[Path, ...]], tuple[Path, ...]
+        ] = {}
 
     def resolve(
         self,
@@ -46,11 +53,10 @@ class TypeScriptConfigResolver:
         module = module.replace("\\", "/")
         if not module or self._has_node_modules(Path(module)):
             return None
-        files: dict[Path, Path] = {}
-        for source in source_files:
-            normalized = self._normalize(source)
-            if not self._has_node_modules(normalized):
-                files.setdefault(normalized, source)
+        files = source_file_index(
+            source_files,
+            ignored_dirs=frozenset({"node_modules"}),
+        )
         if not files:
             return None
         importer_path = self._normalize(importer)
@@ -107,6 +113,11 @@ class TypeScriptConfigResolver:
         self, importer: Path, source_dirs: list[Path]
     ) -> tuple[Path, ...]:
         """Collect local configs, following references and skipping node_modules."""
+        normalized_source_dirs = tuple(self._normalize(path) for path in source_dirs)
+        cache_key = (self._normalize(importer).parent, normalized_source_dirs)
+        cached = self._config_paths_cache.get(cache_key)
+        if cached is not None:
+            return cached
         paths: list[Path] = []
         seen: set[Path] = set()
 
@@ -130,8 +141,8 @@ class TypeScriptConfigResolver:
             config = self._config_in(ancestor)
             if config is not None:
                 add(config)
-        for source_dir in source_dirs:
-            directory = self._normalize(source_dir)
+        for source_dir in normalized_source_dirs:
+            directory = source_dir
             if directory.is_file():
                 directory = directory.parent
             nearest = self._nearest_config(directory)
@@ -148,7 +159,9 @@ class TypeScriptConfigResolver:
                     add(root_path / "tsconfig.json")
                 elif "jsconfig.json" in names:
                     add(root_path / "jsconfig.json")
-        return tuple(paths)
+        result = tuple(paths)
+        self._config_paths_cache[cache_key] = result
+        return result
 
     def _nearest_config(self, directory: Path) -> Path | None:
         """Find the nearest tsconfig.json or jsconfig.json ancestor."""
@@ -197,22 +210,50 @@ class TypeScriptConfigResolver:
                 parent_path = self._local_config_path(value, path.parent)
                 if parent_path is not None:
                     parent = self._config(parent_path, chain)
-                    merged = _Config(parent.base_url, parent.paths, merged.references)
+                    merged = _Config(
+                        base_url=(
+                            parent.base_url
+                            if parent.defines_base_url
+                            else merged.base_url
+                        ),
+                        paths=parent.paths if parent.defines_paths else merged.paths,
+                        references=merged.references,
+                        defines_base_url=(
+                            merged.defines_base_url or parent.defines_base_url
+                        ),
+                        defines_paths=merged.defines_paths or parent.defines_paths,
+                    )
         options = raw.get("compilerOptions")
         if isinstance(options, dict):
             typed_options = cast(dict[str, object], options)
             base_url = merged.base_url
+            defines_base_url = merged.defines_base_url
             local_base_url = typed_options.get("baseUrl")
             if isinstance(local_base_url, str):
                 base_url = self._normalize(path.parent / local_base_url)
+                defines_base_url = True
             rules = merged.paths
+            defines_paths = merged.defines_paths
             raw_paths = typed_options.get("paths")
             if isinstance(raw_paths, dict):
                 anchor = base_url or path.parent
                 rules = self._path_rules(cast(dict[object, object], raw_paths), anchor)
-            merged = _Config(base_url, rules, merged.references)
+                defines_paths = True
+            merged = _Config(
+                base_url,
+                rules,
+                merged.references,
+                defines_base_url,
+                defines_paths,
+            )
         references = self._references(raw.get("references"), path.parent)
-        return _Config(merged.base_url, merged.paths, references)
+        return _Config(
+            merged.base_url,
+            merged.paths,
+            references,
+            merged.defines_base_url,
+            merged.defines_paths,
+        )
 
     def _read(self, path: Path) -> dict[str, object] | None:
         """Read and cache a JSON5 object using its file-stat signature."""

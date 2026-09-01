@@ -37,8 +37,9 @@ class ImportCountIndicator(ImportanceIndicator):
             if source is None:
                 continue
             for reference in adapter.extract_imports(source, source_file.suffix.lower()):
+                module = f"{'.' * reference.level}{reference.module}"
                 resolved = adapter.resolve_import(
-                    reference.module,
+                    module,
                     source_file,
                     source_files,
                     roots,
@@ -134,5 +135,5 @@ class ImportCountIndicator(ImportanceIndicator):
             return {}
         max_score = max(scores.values())
         if max_score == 0:
-            return {key: 0.0 for key in scores}
+            return dict.fromkeys(scores, 0.0)
         return {key: value / max_score for key, value in scores.items()}

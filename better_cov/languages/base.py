@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -22,6 +23,29 @@ class ImportReference:
 
     module: str
     symbols: tuple[str, ...] = ()
+    level: int = 0
+
+
+@lru_cache(maxsize=32)
+def _cached_source_file_index(
+    source_files: tuple[Path, ...],
+    ignored_dirs: frozenset[str],
+) -> dict[Path, Path]:
+    """Build a normalized source-file index for a stable path collection."""
+    files: dict[Path, Path] = {}
+    for source in source_files:
+        normalized = source.expanduser().resolve(strict=False)
+        if not any(part.lower() in ignored_dirs for part in normalized.parts):
+            files.setdefault(normalized, source)
+    return files
+
+
+def source_file_index(
+    source_files: list[Path],
+    ignored_dirs: frozenset[str] = frozenset(),
+) -> dict[Path, Path]:
+    """Reuse normalized source paths across repeated import resolutions."""
+    return _cached_source_file_index(tuple(source_files), ignored_dirs)
 
 
 class LanguageAdapter(ABC):

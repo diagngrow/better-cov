@@ -46,12 +46,12 @@ class TypeScriptLanguageAdapter(JavaScriptLanguageAdapter):
     def extract_imports(self, source: str, suffix: str) -> list[ImportReference]:
         """Extract runtime imports from TypeScript or TSX source."""
         tree, data = _parse(source, self._language(suffix))
-        return _imports(tree, data, True)
+        return _imports(tree, data, typescript=True)
 
     def extract_exports(self, source: str, suffix: str) -> dict[str, str]:
         """Extract exported names from TypeScript or TSX source."""
         tree, data = _parse(source, self._language(suffix))
-        return _export_map(tree, data, True)
+        return _export_map(tree, data, typescript=True)
 
     def resolve_import(
         self,
@@ -60,7 +60,5 @@ class TypeScriptLanguageAdapter(JavaScriptLanguageAdapter):
         source_files: list[Path],
         source_dirs: list[Path],
     ) -> Path | None:
-        """Resolve relative imports conventionally and aliases via TypeScript configuration."""
-        if module.startswith("."):
-            return super().resolve_import(module, importer, source_files, source_dirs)
+        """Resolve imports through TypeScript configuration and extension substitution."""
         return self._resolver.resolve(module, importer, source_files, source_dirs)

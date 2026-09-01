@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -45,6 +46,32 @@ def test_compute_resolves_typescript_paths_and_ignores_type_imports() -> None:
     assert result == {f"{module}::run": 1.0}
 
 
+def test_compute_counts_direct_and_relative_python_imports(tmp_path) -> None:
+    """Verify direct modules and relative levels resolve from the importing file."""
+    source_dir = tmp_path / "src"
+    package = source_dir / "package"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "consumer.py").write_text(
+        "import direct\nfrom . import sibling\nfrom ..shared import run\n",
+        encoding="utf-8",
+    )
+    direct = source_dir / "direct.py"
+    sibling = package / "sibling.py"
+    shared = source_dir / "shared.py"
+    direct.write_text("", encoding="utf-8")
+    sibling.write_text("", encoding="utf-8")
+    shared.write_text("def run():\n    pass\n", encoding="utf-8")
+
+    result = ImportCountIndicator(language="python").compute([str(source_dir)])
+
+    assert result == {
+        str(direct.resolve()): 1.0,
+        str(sibling.resolve()): 1.0,
+        f"{shared.resolve()}::run": 1.0,
+    }
+
+
 def test_language_is_required() -> None:
     """Verify the source language must be selected explicitly."""
     with pytest.raises(TypeError):
@@ -66,7 +93,11 @@ def test_compute_skips_unreadable_python_files(tmp_path, monkeypatch) -> None:
     source_file = tmp_path / "module.py"
     source_file.write_text("", encoding="utf-8")
 
-    def fail_read_text(self, *args, **kwargs):
+    def fail_read_text(
+        _self: Path,
+        *_args: object,
+        **_kwargs: object,
+    ) -> NoReturn:
         raise OSError("permission denied")
 
     monkeypatch.setattr(Path, "read_text", fail_read_text)

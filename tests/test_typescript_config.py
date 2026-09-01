@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from better_cov.languages.typescript_config import TypeScriptConfigResolver
@@ -100,6 +101,32 @@ def test_paths_use_priority_wildcards_and_multiple_targets(tmp_path: Path) -> No
     assert resolver.resolve("@/exact", importer, sources, [tmp_path]) == exact
 
 
+def test_config_discovery_is_cached(tmp_path: Path, monkeypatch) -> None:
+    """Repeated imports from one source tree reuse discovered config paths."""
+    importer = _write(tmp_path / "src" / "main.ts")
+    first = _write(tmp_path / "src" / "first.ts")
+    second = _write(tmp_path / "src" / "second.ts")
+    _write(
+        tmp_path / "tsconfig.json",
+        '{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}',
+    )
+    original_walk = os.walk
+    walk_calls = 0
+
+    def counting_walk(*args, **kwargs):
+        nonlocal walk_calls
+        walk_calls += 1
+        return original_walk(*args, **kwargs)
+
+    monkeypatch.setattr(os, "walk", counting_walk)
+    resolver = TypeScriptConfigResolver()
+    sources = [importer, first, second]
+
+    assert resolver.resolve("@/first", importer, sources, [tmp_path]) == first
+    assert resolver.resolve("@/second", importer, sources, [tmp_path]) == second
+    assert walk_calls == 1
+
+
 def test_resolves_aliases_from_jsconfig(tmp_path: Path) -> None:
     """JavaScript projects can define aliases in jsconfig.json."""
     importer = _write(tmp_path / "app" / "main.js")
@@ -150,6 +177,33 @@ def test_local_extends_keeps_path_targets_relative_to_their_origin(
     )
 
     assert resolved == inherited_target
+
+
+def test_extends_list_retains_options_omitted_by_later_parent(tmp_path: Path) -> None:
+    """Later extends entries only replace compiler options they define."""
+    importer = _write(tmp_path / "src" / "main.ts")
+    target = _write(tmp_path / "src" / "shared" / "tool.ts")
+    _write(
+        tmp_path / "base.json",
+        """{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {"@shared/*": ["src/shared/*"]}
+  }
+}
+""",
+    )
+    _write(tmp_path / "empty.json", "{}")
+    _write(
+        tmp_path / "tsconfig.json",
+        '{"extends": ["./base.json", "./empty.json"]}',
+    )
+
+    resolved = TypeScriptConfigResolver().resolve(
+        "@shared/tool", importer, [importer, target], [tmp_path]
+    )
+
+    assert resolved == target
 
 
 def test_cyclic_local_extends_does_not_recurse_forever(tmp_path: Path) -> None:

@@ -8,6 +8,7 @@ sources fall back to Istanbul method hits and then file-level granularity.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from fractions import Fraction
 from pathlib import Path
 
 from better_cov.languages.base import FunctionRange
@@ -149,7 +150,7 @@ def _find_source_file(
     normalized = Path(filename.replace("\\", "/"))
     candidates = [xml_dir / normalized]
     for root in source_roots:
-        candidates.extend(parent / normalized for parent in (root, *root.parents))
+        candidates.append(root / normalized)
         for position, part in enumerate(normalized.parts):
             if part == root.name and position + 1 < len(normalized.parts):
                 candidates.append(root / Path(*normalized.parts[position + 1 :]))
@@ -189,7 +190,11 @@ def _coverage_from_methods(
         else:
             line_rate = _safe_float(line_rate_attr)
             if total == 0:
-                covered, total = (1, 1) if line_rate == 1.0 else (0, 1)
+                if 0.0 < line_rate < 1.0:
+                    fraction = Fraction(str(line_rate))
+                    covered, total = fraction.numerator, fraction.denominator
+                else:
+                    covered, total = (1, 1) if line_rate >= 1.0 else (0, 1)
         results.append(
             FunctionCoverage(
                 file=filename,

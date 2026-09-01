@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -102,6 +103,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_IGNORED_DIRS = {".git", ".venv", "node_modules"}
+
+
+def _find_source_dirs(root: Path) -> list[str]:
+    """Find nested src directories without traversing ignored branches."""
+    found: list[str] = []
+    for current, directories, _ in os.walk(root):
+        retained: list[str] = []
+        for directory in sorted(directories):
+            if directory in _IGNORED_DIRS:
+                continue
+            if directory == "src":
+                found.append(str(Path(current) / directory))
+            else:
+                retained.append(directory)
+        directories[:] = retained
+    return sorted(found)
+
+
 def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
     """Fills in coverage_xml and source_dirs from project_dir when not explicitly set."""
     if args.project_dir is None:
@@ -117,15 +137,7 @@ def _resolve_args(args: argparse.Namespace) -> argparse.Namespace:
         if direct.is_dir():
             args.source_dirs = [str(direct)]
         else:
-            found = sorted(
-                str(path)
-                for path in root.rglob("src")
-                if path.is_dir()
-                and not any(
-                    part in {".git", ".venv", "node_modules"}
-                    for part in path.parts
-                )
-            )
+            found = _find_source_dirs(root)
             args.source_dirs = found if found else [str(direct)]
     return args
 

@@ -6,7 +6,12 @@ from pathlib import Path
 import tree_sitter_javascript
 from tree_sitter import Language, Node, Parser, Tree
 
-from better_cov.languages.base import FunctionRange, ImportReference, LanguageAdapter
+from better_cov.languages.base import (
+    FunctionRange,
+    ImportReference,
+    LanguageAdapter,
+    source_file_index,
+)
 
 _JS_LANGUAGE = Language(tree_sitter_javascript.language())
 _JS_EXTENSIONS = (".js", ".jsx", ".mjs", ".cjs")
@@ -173,7 +178,12 @@ def _is_type_context(node: Node) -> bool:
     return False
 
 
-def _import_symbols(node: Node, data: bytes, typescript: bool) -> tuple[str, ...] | None:
+def _import_symbols(
+    node: Node,
+    data: bytes,
+    *,
+    typescript: bool,
+) -> tuple[str, ...] | None:
     """Extract imported symbols from an import statement."""
     prefix = _text(node, data).lstrip()
     if typescript and prefix.startswith("import type"):
@@ -251,7 +261,12 @@ def _call_symbols(node: Node, kind: str, data: bytes) -> tuple[str, ...]:
     return ("*",)
 
 
-def _reexport_symbols(node: Node, data: bytes, typescript: bool) -> tuple[str, ...] | None:
+def _reexport_symbols(
+    node: Node,
+    data: bytes,
+    *,
+    typescript: bool,
+) -> tuple[str, ...] | None:
     """Extract symbols re-exported by an export statement."""
     text = _text(node, data).lstrip()
     if typescript and text.startswith("export type"):
@@ -272,17 +287,33 @@ def _reexport_symbols(node: Node, data: bytes, typescript: bool) -> tuple[str, .
     return None if skipped_type and not symbols else _unique(symbols)
 
 
-def _imports(tree: Tree, data: bytes, typescript: bool = False) -> list[ImportReference]:
+def _imports(
+    tree: Tree,
+    data: bytes,
+    *,
+    typescript: bool = False,
+) -> list[ImportReference]:
     """Extract runtime imports and re-exports from a parsed source tree."""
     result: list[ImportReference] = []
     for node in _nodes(tree.root_node):
         if node.type == "import_statement":
             source = _field(node, "source")
-            symbols = _import_symbols(node, data, typescript)
+            if source is None:
+                require_clause = next(
+                    (
+                        child
+                        for child in node.named_children
+                        if child.type == "import_require_clause"
+                    ),
+                    None,
+                )
+                if require_clause is not None:
+                    source = _field(require_clause, "source")
+            symbols = _import_symbols(node, data, typescript=typescript)
             if source is not None and symbols is not None:
                 result.append(ImportReference(_string(source, data), symbols))
         elif node.type == "export_statement" and _field(node, "source") is not None:
-            symbols = _reexport_symbols(node, data, typescript)
+            symbols = _reexport_symbols(node, data, typescript=typescript)
             if symbols is not None:
                 result.append(ImportReference(_string(_field(node, "source"), data), symbols))
         elif node.type == "call_expression" and not (typescript and _is_type_context(node)):
@@ -307,7 +338,12 @@ def _declared_names(node: Node, data: bytes) -> list[str]:
     return names
 
 
-def _export_map(tree: Tree, data: bytes, typescript: bool = False) -> dict[str, str]:
+def _export_map(
+    tree: Tree,
+    data: bytes,
+    *,
+    typescript: bool = False,
+) -> dict[str, str]:
     """Map exported names to local names in a parsed source tree."""
     exports: dict[str, str] = {}
     for node in _nodes(tree.root_node):
@@ -374,7 +410,7 @@ def _resolve_relative(module: str, importer: Path, source_files: list[Path], ext
     if not base.suffix:
         candidates.extend(base.with_suffix(extension) for extension in extensions)
         candidates.extend(base / f"index{extension}" for extension in extensions)
-    files = {path.resolve(): path for path in source_files}
+    files = source_file_index(source_files)
     for candidate in candidates:
         match = files.get(candidate.resolve())
         if match is not None:

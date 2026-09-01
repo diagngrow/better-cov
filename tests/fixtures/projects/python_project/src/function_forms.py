@@ -1,5 +1,5 @@
 def top():
-    def nested():
+    def nested() -> int:
         return 1
     return nested()
 

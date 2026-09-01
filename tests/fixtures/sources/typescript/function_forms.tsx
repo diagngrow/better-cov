@@ -19,12 +19,12 @@ export const List = <T,>({ items }: Props<T>) => (
   </ul>
 );
 
-class Repository<T> {
+abstract class Repository<T> {
   get<U>(value: U): U {
     return value;
   }
 
-  save(value: T): void;
+  abstract save(value: T): void;
 }
 
 function parse(value: string): string;

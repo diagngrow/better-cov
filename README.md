@@ -12,7 +12,7 @@ Supported source files are Python (`.py`), JavaScript (`.js`, `.jsx`, `.mjs`, `.
 
 ## How it works
 
-```
+```text
 weighted_score = Σ(line_rate_i × importance_i) / Σ(importance_i)
 ```
 
@@ -93,7 +93,7 @@ Vitest also writes `coverage/cobertura-coverage.xml` by default.
 
 ## CLI reference
 
-```
+```text
 usage: better_cov [-h] [--coverage-xml PATH] [--source-dirs DIR [DIR ...]]
                   [--language {auto,python,javascript,typescript}]
                   [--output PATH] [--min-score PCT] [--min-importance FLOAT]
@@ -166,7 +166,7 @@ The console report shows weighted and raw coverage plus the most important funct
 
 ## Project structure
 
-```
+```text
 better_cov/
 ├── languages/
 │   ├── base.py              # Language adapter contracts

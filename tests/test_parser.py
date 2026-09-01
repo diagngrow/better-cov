@@ -3,8 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from better_cov.models import FunctionCoverage
 from better_cov.parsers import cobertura
-from better_cov.parsers.cobertura import FunctionCoverage, parse_coverage_xml
+from better_cov.parsers.cobertura import parse_coverage_xml
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -97,12 +98,14 @@ def test_find_source_file_checks_xml_directory_and_source_roots(tmp_path) -> Non
     source_root.mkdir()
     xml_file = xml_dir / "from-report.py"
     source_file = source_root / "from-root.py"
-    nested_root = tmp_path / "project" / "packages" / "app" / "src"
+    nested_root = tmp_path / "workspace" / "src"
     nested_root.mkdir(parents=True)
     nested_file = nested_root / "index.ts"
+    ancestor_file = tmp_path / "outside.py"
     xml_file.write_text("", encoding="utf-8")
     source_file.write_text("", encoding="utf-8")
     nested_file.write_text("", encoding="utf-8")
+    ancestor_file.write_text("", encoding="utf-8")
 
     assert cobertura._find_source_file("from-report.py", xml_dir, [source_root]) == xml_file
     assert cobertura._find_source_file("from-root.py", xml_dir, [source_root]) == source_file
@@ -114,6 +117,7 @@ def test_find_source_file_checks_xml_directory_and_source_roots(tmp_path) -> Non
         )
         == nested_file
     )
+    assert cobertura._find_source_file("outside.py", xml_dir, [source_root]) is None
     assert cobertura._find_source_file("missing.py", xml_dir, [source_root]) is None
 
 
@@ -136,6 +140,7 @@ def test_parse_coverage_xml_reads_method_level_reports(tmp_path) -> None:
           <lines><line number="1" hits="2"/><line number="2" hits="0"/></lines>
         </method>
         <method name="empty" line-rate="0.0" />
+        <method name="half-without-lines" line-rate="0.5" />
         <method name="full-without-lines" line-rate="1.0" />
       </methods>
     </class>
@@ -150,6 +155,7 @@ def test_parse_coverage_xml_reads_method_level_reports(tmp_path) -> None:
     assert result == [
         FunctionCoverage("module.py", "covered", 1.0, 1, 2),
         FunctionCoverage("module.py", "empty", 0.0, 0, 1),
+        FunctionCoverage("module.py", "half-without-lines", 0.5, 1, 2),
         FunctionCoverage("module.py", "full-without-lines", 1.0, 1, 1),
     ]
 

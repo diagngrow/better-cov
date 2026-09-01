@@ -99,6 +99,8 @@ def test_resolve_args_finds_nested_src_directories(tmp_path) -> None:
     nested_src = tmp_path / "packages" / "one" / "src"
     nested_src.mkdir(parents=True)
     (tmp_path / "node_modules" / "dependency" / "src").mkdir(parents=True)
+    (tmp_path / ".git" / "worktree" / "src").mkdir(parents=True)
+    (tmp_path / ".venv" / "package" / "src").mkdir(parents=True)
     args = build_parser().parse_args([str(tmp_path)])
 
     resolved = _resolve_args(args)

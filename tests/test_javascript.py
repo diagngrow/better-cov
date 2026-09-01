@@ -64,6 +64,15 @@ def test_javascript_extracts_esm_commonjs_and_dynamic_imports() -> None:
     ]
 
 
+def test_typescript_extracts_import_require_clauses() -> None:
+    """Read the module source stored on TypeScript import-require clauses."""
+    source = 'import legacy = require("./legacy");'
+
+    assert TypeScriptLanguageAdapter().extract_imports(source, ".ts") == [
+        ImportReference("./legacy", ("default",)),
+    ]
+
+
 def test_typescript_ignores_type_only_imports_and_reexports() -> None:
     """Keep runtime TS dependencies while excluding type-only references."""
     source = _read_fixture("sources", "typescript", "imports.ts")
@@ -126,4 +135,5 @@ def test_typescript_relative_resolution_prefers_ts_and_supports_js(tmp_path) -> 
     adapter = TypeScriptLanguageAdapter()
 
     assert adapter.resolve_import("./utility", importer, source_files, []) == typed
+    assert adapter.resolve_import("./utility.js", importer, source_files, []) == typed
     assert adapter.resolve_import("./feature", importer, source_files, []) == package_index

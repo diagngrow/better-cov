@@ -93,8 +93,11 @@ def compute_weighted_coverage(
         )
 
     indicator_scores_map: dict[str, dict[str, float]] = {}
+    indicator_score_indexes: dict[str, _ScoreIndex] = {}
     for ic in indicator_configs:
-        indicator_scores_map[ic.indicator.name] = ic.indicator.compute(source_dirs)
+        scores = ic.indicator.compute(source_dirs)
+        indicator_scores_map[ic.indicator.name] = scores
+        indicator_score_indexes[ic.indicator.name] = _build_score_index(scores)
 
     total_weight = sum(ic.weight for ic in indicator_configs) or 1.0
 
@@ -105,7 +108,12 @@ def compute_weighted_coverage(
 
         for ic in indicator_configs:
             scores = indicator_scores_map[ic.indicator.name]
-            score = _lookup_score(fc.file, scores, fc.function)
+            score = _lookup_score(
+                fc.file,
+                scores,
+                fc.function,
+                index=indicator_score_indexes[ic.indicator.name],
+            )
             raw_scores[ic.indicator.name] = score
             composite_importance += score * ic.weight
 
@@ -155,9 +163,61 @@ def compute_weighted_coverage(
     )
 
 
-def _lookup_score(file_path: str, scores: dict[str, float], function: str = "") -> float:
+@dataclass(frozen=True)
+class _PathScore:
+    path: tuple[str, ...]
+    score: float
+
+
+@dataclass
+class _ScoreIndex:
+    symbols: dict[str, list[_PathScore]] = field(default_factory=dict)
+    files: dict[str, list[_PathScore]] = field(default_factory=dict)
+
+
+def _path_segments(path: str) -> tuple[str, ...]:
+    """Normalize a path into non-empty slash-delimited segments."""
+    return tuple(part for part in path.replace("\\", "/").split("/") if part)
+
+
+def _paths_match(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
+    """Match equal paths or complete suffixes without partial filename matches."""
+    if not left or not right:
+        return False
+    return (
+        len(left) >= len(right) and left[-len(right) :] == right
+    ) or (
+        len(right) >= len(left) and right[-len(left) :] == left
+    )
+
+
+def _build_score_index(scores: dict[str, float]) -> _ScoreIndex:
+    """Index score entries by symbol while retaining file-level fallbacks."""
+    index = _ScoreIndex()
+    for key, score in scores.items():
+        if "::" in key:
+            file_part, symbol = key.rsplit("::", 1)
+            index.symbols.setdefault(symbol, []).append(
+                _PathScore(_path_segments(file_part), score)
+            )
+        else:
+            path = _path_segments(key)
+            if path:
+                index.files.setdefault(path[-1], []).append(_PathScore(path, score))
+    return index
+
+
+def _lookup_score(
+    file_path: str,
+    scores: dict[str, float],
+    function: str = "",
+    *,
+    index: _ScoreIndex | None = None,
+) -> float:
     """Looks up symbol, containing class, and file scores across path variants."""
     normalized_file = file_path.replace("\\", "/")
+    file_segments = _path_segments(normalized_file)
+    score_index = index or _build_score_index(scores)
     symbols = [function] if function else []
     if "." in function:
         symbols.append(function.rsplit(".", 1)[0])
@@ -167,26 +227,16 @@ def _lookup_score(file_path: str, scores: dict[str, float], function: str = "") 
         for exact_key in exact_keys:
             if exact_key in scores:
                 return scores[exact_key]
-        for key, value in scores.items():
-            if "::" not in key:
-                continue
-            file_part, symbol_part = key.rsplit("::", 1)
-            normalized_part = file_part.replace("\\", "/")
-            if symbol_part == symbol and (
-                normalized_part.endswith(normalized_file)
-                or normalized_file.endswith(normalized_part)
-            ):
-                return value
+        for candidate in score_index.symbols.get(symbol, []):
+            if _paths_match(candidate.path, file_segments):
+                return candidate.score
 
     for exact_key in (file_path, normalized_file):
         if exact_key in scores:
             return scores[exact_key]
-    for key, value in scores.items():
-        normalized_key = key.replace("\\", "/")
-        if "::" not in key and (
-            normalized_key.endswith(normalized_file)
-            or normalized_file.endswith(normalized_key)
-        ):
-            return value
+    file_candidates = score_index.files.get(file_segments[-1], []) if file_segments else []
+    for candidate in file_candidates:
+        if _paths_match(candidate.path, file_segments):
+            return candidate.score
 
     return 0.0
