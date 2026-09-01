@@ -92,6 +92,31 @@ def test_compute_weighted_coverage_handles_zero_total_importance_and_lines() -> 
     assert result.functions[0].importance == 0.0
 
 
+def test_compute_weighted_coverage_ignores_entries_without_measurable_lines() -> None:
+    indicator = StaticIndicator(
+        "importance",
+        {
+            "module.py::measured": 0.5,
+            "module.py::empty": 1.0,
+            "empty.py::<module>": 1.0,
+        },
+    )
+    result = compute_weighted_coverage(
+        [
+            FunctionCoverage("module.py", "measured", 0.5, 1, 2),
+            FunctionCoverage("module.py", "empty", 0.0, 0, 0),
+            FunctionCoverage("empty.py", "<module>", 0.0, 0, 0),
+        ],
+        [IndicatorConfig(indicator)],
+        ["src"],
+    )
+
+    assert result.global_score == 0.5
+    assert result.global_score_pct == 50.0
+    assert result.raw_coverage == 0.5
+    assert result.total_functions == 3
+
+
 def test_compute_weighted_coverage_applies_minimum_importance_without_indicators() -> None:
     """Verify functions without indicator scores receive the configured minimum importance."""
     result = compute_weighted_coverage(

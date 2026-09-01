@@ -126,12 +126,13 @@ def compute_weighted_coverage(
             )
         )
 
-    total_importance = sum(fs.importance for fs in function_scores)
+    measurable_scores = [fs for fs in function_scores if fs.lines_total > 0]
+    total_importance = sum(fs.importance for fs in measurable_scores)
     if total_importance == 0:
         global_score = 0.0
     else:
         global_score = (
-            sum(fs.line_rate * fs.importance for fs in function_scores)
+            sum(fs.line_rate * fs.importance for fs in measurable_scores)
             / total_importance
         )
 
