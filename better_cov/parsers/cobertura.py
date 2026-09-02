@@ -211,6 +211,40 @@ def _coverage_from_methods(
 # Public entry point
 # ---------------------------------------------------------------------------
 
+def _class_coverage(
+    cls: ET.Element, filename: str, xml_dir: Path, roots: list[Path], language: str
+) -> list[FunctionCoverage]:
+    """Extract coverage for one Cobertura class."""
+    methods_el = cls.find("methods")
+    methods = methods_el.findall("method") if methods_el is not None else []
+    if methods and all(method.get("line-rate") is not None for method in methods):
+        return _coverage_from_methods(methods, filename)
+    line_hits = _line_hits_from_element(cls)
+    src_file = _find_source_file(filename, xml_dir, roots)
+    adapter = detect_language_adapter(filename, language)
+    if src_file is not None and adapter is not None:
+        try:
+            source = src_file.read_text(encoding="utf-8", errors="replace")
+            func_ranges = adapter.extract_function_ranges(source, src_file.suffix.lower())
+            if func_ranges or not methods:
+                return _assign_lines_to_functions(line_hits, func_ranges, filename)
+        except OSError:
+            pass
+    if methods:
+        return _coverage_from_methods(methods, filename)
+    covered = sum(1 for hits in line_hits.values() if hits > 0)
+    total = len(line_hits) or 1
+    return [
+        FunctionCoverage(
+            file=filename,
+            function="<module>",
+            line_rate=covered / total,
+            lines_covered=covered,
+            lines_total=total,
+        )
+    ]
+
+
 def parse_coverage_xml(
     xml_path: str | Path,
     source_roots: list[str | Path] | None = None,
@@ -242,41 +276,6 @@ def parse_coverage_xml(
     for package in root.iter("package"):
         for cls in package.iter("class"):
             filename = cls.get("filename", "<unknown>")
-            methods_el = cls.find("methods")
-            methods = methods_el.findall("method") if methods_el is not None else []
-            if methods and all(method.get("line-rate") is not None for method in methods):
-                results.extend(_coverage_from_methods(methods, filename))
-                continue
-
-            line_hits = _line_hits_from_element(cls)
-            src_file = _find_source_file(filename, xml_dir, roots)
-            adapter = detect_language_adapter(filename, language)
-            if src_file is not None and adapter is not None:
-                try:
-                    source = src_file.read_text(encoding="utf-8", errors="replace")
-                    func_ranges = adapter.extract_function_ranges(source, src_file.suffix.lower())
-                    if func_ranges or not methods:
-                        results.extend(
-                            _assign_lines_to_functions(line_hits, func_ranges, filename)
-                        )
-                        continue
-                except OSError:
-                    pass
-
-            if methods:
-                results.extend(_coverage_from_methods(methods, filename))
-                continue
-
-            covered = sum(1 for hits in line_hits.values() if hits > 0)
-            total = len(line_hits) or 1
-            results.append(
-                FunctionCoverage(
-                    file=filename,
-                    function="<module>",
-                    line_rate=covered / total,
-                    lines_covered=covered,
-                    lines_total=total,
-                )
-            )
+            results.extend(_class_coverage(cls, filename, xml_dir, roots, language))
 
     return results

@@ -3,7 +3,7 @@ function declared() {
 }
 
 async function load() {
-  return Promise.resolve(2);
+  return 2;
 }
 
 function* identifiers() {
@@ -26,17 +26,18 @@ class Worker {
 
 const helpers = {
   format(value) {
-    return String(value);
+    return value;
   },
   normalize: function (value) {
     return value.trim();
   },
 };
 
+function inner() {
+  return helpers.format(4);
+}
+
 function outer() {
-  function inner() {
-    return helpers.format(4);
-  }
   return inner();
 }
 

@@ -207,6 +207,46 @@ def _build_score_index(scores: dict[str, float]) -> _ScoreIndex:
     return index
 
 
+def _symbol_score(
+    file_path: str,
+    normalized_file: str,
+    file_segments: tuple[str, ...],
+    function: str,
+    scores: dict[str, float],
+    index: _ScoreIndex,
+) -> float | None:
+    """Look up an exact or suffix-matched symbol score."""
+    symbols = [function] if function else []
+    if "." in function:
+        symbols.append(function.rsplit(".", 1)[0])
+    for symbol in symbols:
+        for exact_key in (f"{file_path}::{symbol}", f"{normalized_file}::{symbol}"):
+            if exact_key in scores:
+                return scores[exact_key]
+        for candidate in index.symbols.get(symbol, []):
+            if _paths_match(candidate.path, file_segments):
+                return candidate.score
+    return None
+
+
+def _file_score(
+    file_path: str,
+    normalized_file: str,
+    file_segments: tuple[str, ...],
+    scores: dict[str, float],
+    index: _ScoreIndex,
+) -> float:
+    """Look up an exact or suffix-matched file score."""
+    for exact_key in (file_path, normalized_file):
+        if exact_key in scores:
+            return scores[exact_key]
+    file_candidates = index.files.get(file_segments[-1], []) if file_segments else []
+    for candidate in file_candidates:
+        if _paths_match(candidate.path, file_segments):
+            return candidate.score
+    return 0.0
+
+
 def _lookup_score(
     file_path: str,
     scores: dict[str, float],
@@ -218,25 +258,9 @@ def _lookup_score(
     normalized_file = file_path.replace("\\", "/")
     file_segments = _path_segments(normalized_file)
     score_index = index or _build_score_index(scores)
-    symbols = [function] if function else []
-    if "." in function:
-        symbols.append(function.rsplit(".", 1)[0])
-
-    for symbol in symbols:
-        exact_keys = (f"{file_path}::{symbol}", f"{normalized_file}::{symbol}")
-        for exact_key in exact_keys:
-            if exact_key in scores:
-                return scores[exact_key]
-        for candidate in score_index.symbols.get(symbol, []):
-            if _paths_match(candidate.path, file_segments):
-                return candidate.score
-
-    for exact_key in (file_path, normalized_file):
-        if exact_key in scores:
-            return scores[exact_key]
-    file_candidates = score_index.files.get(file_segments[-1], []) if file_segments else []
-    for candidate in file_candidates:
-        if _paths_match(candidate.path, file_segments):
-            return candidate.score
-
-    return 0.0
+    symbol_score = _symbol_score(
+        file_path, normalized_file, file_segments, function, scores, score_index
+    )
+    return symbol_score if symbol_score is not None else _file_score(
+        file_path, normalized_file, file_segments, scores, score_index
+    )

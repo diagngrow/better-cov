@@ -13,7 +13,10 @@ from better_cov.languages.base import (
     source_file_index,
 )
 
-_FROM_IMPORT_RE = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+(.+)$", re.MULTILINE)
+_FROM_IMPORT_RE = re.compile(
+    r"^[ \t]*from[ \t]+([A-Za-z0-9_.]+)[ \t]+import[ \t]+([^\r\n]+)$",
+    re.MULTILINE,
+)
 
 
 class _FunctionRangeVisitor(ast.NodeVisitor):

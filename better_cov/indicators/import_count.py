@@ -6,7 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from better_cov.indicators.base import ImportanceIndicator
-from better_cov.languages.base import LanguageAdapter
+from better_cov.languages.base import ImportReference, LanguageAdapter
 from better_cov.languages.registry import detect_language_adapter, get_language_adapters
 
 
@@ -20,6 +20,33 @@ class ImportCountIndicator(ImportanceIndicator):
     def name(self) -> str:
         return "import_count"
 
+    def _count_reference(
+        self,
+        reference: ImportReference,
+        adapter: LanguageAdapter,
+        source_file: Path,
+        source_files: list[Path],
+        roots: list[Path],
+        source_cache: dict[Path, str | None],
+        export_cache: dict[tuple[Path, str], dict[str, str]],
+        symbol_counts: dict[str, int],
+    ) -> None:
+        """Resolve one import reference and add its symbol counts."""
+        module = f"{'.' * reference.level}{reference.module}"
+        resolved = adapter.resolve_import(module, source_file, source_files, roots)
+        if resolved is None:
+            return
+        if not reference.symbols:
+            symbol_counts[self._path_key(resolved)] += 1
+            return
+        target_adapter = detect_language_adapter(resolved, "auto")
+        exports = self._exports_for(resolved, target_adapter, source_cache, export_cache)
+        for symbol in reference.symbols:
+            key = self._path_key(resolved)
+            if symbol != "*":
+                key = f"{key}::{exports.get(symbol, symbol)}"
+            symbol_counts[key] += 1
+
     def compute(self, source_dirs: list[str]) -> dict[str, float]:
         """Scan source directories and return normalized scores per symbol."""
         roots = [Path(source_dir).resolve() for source_dir in source_dirs]
@@ -28,41 +55,16 @@ class ImportCountIndicator(ImportanceIndicator):
         symbol_counts: dict[str, int] = defaultdict(int)
         source_cache: dict[Path, str | None] = {}
         export_cache: dict[tuple[Path, str], dict[str, str]] = {}
-
         for source_file in source_files:
             adapter = detect_language_adapter(source_file, self.language)
-            if adapter is None:
-                continue
-            source = self._read_source(source_file, source_cache)
-            if source is None:
+            source = self._read_source(source_file, source_cache) if adapter else None
+            if adapter is None or source is None:
                 continue
             for reference in adapter.extract_imports(source, source_file.suffix.lower()):
-                module = f"{'.' * reference.level}{reference.module}"
-                resolved = adapter.resolve_import(
-                    module,
-                    source_file,
-                    source_files,
-                    roots,
+                self._count_reference(
+                    reference, adapter, source_file, source_files, roots,
+                    source_cache, export_cache, symbol_counts,
                 )
-                if resolved is None:
-                    continue
-                if not reference.symbols:
-                    symbol_counts[self._path_key(resolved)] += 1
-                    continue
-                target_adapter = detect_language_adapter(resolved, "auto")
-                exports = self._exports_for(
-                    resolved,
-                    target_adapter,
-                    source_cache,
-                    export_cache,
-                )
-                for symbol in reference.symbols:
-                    if symbol == "*":
-                        symbol_counts[self._path_key(resolved)] += 1
-                    else:
-                        local_symbol = exports.get(symbol, symbol)
-                        symbol_counts[f"{self._path_key(resolved)}::{local_symbol}"] += 1
-
         return self._normalize(dict(symbol_counts))
 
     def _collect_source_files(

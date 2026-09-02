@@ -5,13 +5,14 @@ from pathlib import Path
 import tree_sitter_typescript
 from tree_sitter import Language
 
-from better_cov.languages.base import ImportReference
+from better_cov.languages.base import FunctionRange, ImportReference
 from better_cov.languages.javascript import (
     _JS_EXTENSIONS,
     JavaScriptLanguageAdapter,
     _export_map,
     _imports,
     _parse,
+    _ranges,
 )
 from better_cov.languages.typescript_config import TypeScriptConfigResolver
 
@@ -38,6 +39,11 @@ class TypeScriptLanguageAdapter(JavaScriptLanguageAdapter):
     def _language(self, suffix: str) -> Language:
         """Select TSX for `.tsx` files and TypeScript otherwise."""
         return _TSX_LANGUAGE if suffix.lower() == ".tsx" else _TS_LANGUAGE
+
+    def extract_function_ranges(self, source: str, suffix: str) -> list[FunctionRange]:
+        """Extract executable function ranges from TypeScript or TSX source."""
+        tree, data = _parse(source, self._language(suffix))
+        return _ranges(tree, data)
 
     def _resolution_extensions(self) -> tuple[str, ...]:
         """Return TypeScript and JavaScript suffixes for import resolution."""

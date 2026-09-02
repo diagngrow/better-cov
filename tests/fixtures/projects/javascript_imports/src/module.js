@@ -1,2 +1,4 @@
-export function first() {}
-export const second = () => {};
+export function first() {
+  return 1;
+}
+export const second = () => 2;

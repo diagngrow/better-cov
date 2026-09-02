@@ -9,3 +9,4 @@ const lazy = import("./lazy");
 export { alpha, beta as renamed } from "./source";
 export * from "./all";
 export * as namespace from "./namespace";
+export { primary, named, alias, toolkit, read, save, member, library, lazy };

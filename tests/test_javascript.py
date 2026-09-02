@@ -26,9 +26,9 @@ def test_javascript_function_ranges_cover_common_runtime_forms() -> None:
         FunctionRange("Worker.build", 22, 24),
         FunctionRange("format", 28, 30),
         FunctionRange("normalize", 31, 33),
-        FunctionRange("outer", 36, 41),
-        FunctionRange("inner", 37, 39),
-        FunctionRange("View", 43, 47),
+        FunctionRange("inner", 36, 38),
+        FunctionRange("outer", 40, 42),
+        FunctionRange("View", 44, 48),
     ]
 
 

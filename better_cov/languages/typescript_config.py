@@ -9,6 +9,8 @@ import json5
 
 from better_cov.languages.base import source_file_index
 
+_TSCONFIG = "tsconfig.json"
+_JSCONFIG = "jsconfig.json"
 _EXTENSIONS = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
 _EXTENSION_REPLACEMENTS = {
     ".js": (".ts", ".tsx", ".js", ".jsx"),
@@ -109,6 +111,40 @@ class TypeScriptConfigResolver:
             candidates.extend(path / f"index{extension}" for extension in _EXTENSIONS)
         return tuple(dict.fromkeys(candidates))
 
+    def _add_config_path(
+        self, path: Path, paths: list[Path], seen: set[Path]
+    ) -> None:
+        """Add a config and its references once, excluding node_modules."""
+        normalized = self._normalize(path)
+        if normalized in seen or self._has_node_modules(normalized):
+            return
+        seen.add(normalized)
+        if not normalized.is_file():
+            return
+        paths.append(normalized)
+        config = self._config(normalized, frozenset())
+        for reference in config.references:
+            self._add_config_path(reference, paths, seen)
+
+    def _configs_in_directory(
+        self, directory: Path, paths: list[Path], seen: set[Path]
+    ) -> None:
+        """Collect configs under one source directory."""
+        if directory.is_file():
+            directory = directory.parent
+        nearest = self._nearest_config(directory)
+        if nearest is not None:
+            self._add_config_path(nearest, paths, seen)
+        if not directory.is_dir() or self._has_node_modules(directory):
+            return
+        for root, directories, names in os.walk(directory):
+            directories[:] = sorted(
+                name for name in directories if name.lower() != "node_modules"
+            )
+            config_name = _TSCONFIG if _TSCONFIG in names else _JSCONFIG
+            if config_name in names:
+                self._add_config_path(Path(root) / config_name, paths, seen)
+
     def _config_paths(
         self, importer: Path, source_dirs: list[Path]
     ) -> tuple[Path, ...]:
@@ -120,45 +156,15 @@ class TypeScriptConfigResolver:
             return cached
         paths: list[Path] = []
         seen: set[Path] = set()
-
-        def add(path: Path) -> None:
-            """Add a config and its references once, excluding node_modules."""
-            normalized = self._normalize(path)
-            if normalized in seen or self._has_node_modules(normalized):
-                return
-            seen.add(normalized)
-            if not normalized.is_file():
-                return
-            paths.append(normalized)
-            config = self._config(normalized, frozenset())
-            for reference in config.references:
-                add(reference)
-
         nearest = self._nearest_config(importer.parent)
         if nearest is not None:
-            add(nearest)
+            self._add_config_path(nearest, paths, seen)
         for ancestor in self._ancestors(importer.parent):
             config = self._config_in(ancestor)
             if config is not None:
-                add(config)
+                self._add_config_path(config, paths, seen)
         for source_dir in normalized_source_dirs:
-            directory = source_dir
-            if directory.is_file():
-                directory = directory.parent
-            nearest = self._nearest_config(directory)
-            if nearest is not None:
-                add(nearest)
-            if not directory.is_dir() or self._has_node_modules(directory):
-                continue
-            for root, directories, names in os.walk(directory):
-                directories[:] = sorted(
-                    name for name in directories if name.lower() != "node_modules"
-                )
-                root_path = Path(root)
-                if "tsconfig.json" in names:
-                    add(root_path / "tsconfig.json")
-                elif "jsconfig.json" in names:
-                    add(root_path / "jsconfig.json")
+            self._configs_in_directory(source_dir, paths, seen)
         result = tuple(paths)
         self._config_paths_cache[cache_key] = result
         return result
@@ -185,11 +191,56 @@ class TypeScriptConfigResolver:
     @staticmethod
     def _config_in(directory: Path) -> Path | None:
         """Find a TypeScript or JavaScript config directly in a directory."""
-        for name in ("tsconfig.json", "jsconfig.json"):
+        for name in (_TSCONFIG, _JSCONFIG):
             candidate = directory / name
             if candidate.is_file():
                 return candidate
         return None
+
+    def _merge_extended(self, raw: dict[str, object], path: Path, seen: frozenset[Path]) -> _Config:
+        """Merge options inherited from local extended configs."""
+        merged = _Config()
+        extends = raw.get("extends")
+        values = [extends] if isinstance(extends, str) else extends
+        if not isinstance(values, list):
+            return merged
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            parent_path = self._local_config_path(value, path.parent)
+            if parent_path is None:
+                continue
+            parent = self._config(parent_path, seen | {path})
+            merged = _Config(
+                base_url=parent.base_url if parent.defines_base_url else merged.base_url,
+                paths=parent.paths if parent.defines_paths else merged.paths,
+                references=merged.references,
+                defines_base_url=merged.defines_base_url or parent.defines_base_url,
+                defines_paths=merged.defines_paths or parent.defines_paths,
+            )
+        return merged
+
+    def _apply_compiler_options(
+        self, raw: dict[str, object], path: Path, config: _Config
+    ) -> _Config:
+        """Apply compiler options that affect module resolution."""
+        options = raw.get("compilerOptions")
+        if not isinstance(options, dict):
+            return config
+        typed_options = cast(dict[str, object], options)
+        base_url = config.base_url
+        defines_base_url = config.defines_base_url
+        local_base_url = typed_options.get("baseUrl")
+        if isinstance(local_base_url, str):
+            base_url = self._normalize(path.parent / local_base_url)
+            defines_base_url = True
+        rules = config.paths
+        defines_paths = config.defines_paths
+        raw_paths = typed_options.get("paths")
+        if isinstance(raw_paths, dict):
+            rules = self._path_rules(cast(dict[object, object], raw_paths), base_url or path.parent)
+            defines_paths = True
+        return _Config(base_url, rules, config.references, defines_base_url, defines_paths)
 
     def _config(self, path: Path, seen: frozenset[Path]) -> _Config:
         """Load JSON5 config options, local extends, and project references."""
@@ -199,58 +250,12 @@ class TypeScriptConfigResolver:
         raw = self._read(path)
         if raw is None:
             return _Config()
-        chain = seen | {path}
-        merged = _Config()
-        extends = raw.get("extends")
-        values = [extends] if isinstance(extends, str) else extends
-        if isinstance(values, list):
-            for value in values:
-                if not isinstance(value, str):
-                    continue
-                parent_path = self._local_config_path(value, path.parent)
-                if parent_path is not None:
-                    parent = self._config(parent_path, chain)
-                    merged = _Config(
-                        base_url=(
-                            parent.base_url
-                            if parent.defines_base_url
-                            else merged.base_url
-                        ),
-                        paths=parent.paths if parent.defines_paths else merged.paths,
-                        references=merged.references,
-                        defines_base_url=(
-                            merged.defines_base_url or parent.defines_base_url
-                        ),
-                        defines_paths=merged.defines_paths or parent.defines_paths,
-                    )
-        options = raw.get("compilerOptions")
-        if isinstance(options, dict):
-            typed_options = cast(dict[str, object], options)
-            base_url = merged.base_url
-            defines_base_url = merged.defines_base_url
-            local_base_url = typed_options.get("baseUrl")
-            if isinstance(local_base_url, str):
-                base_url = self._normalize(path.parent / local_base_url)
-                defines_base_url = True
-            rules = merged.paths
-            defines_paths = merged.defines_paths
-            raw_paths = typed_options.get("paths")
-            if isinstance(raw_paths, dict):
-                anchor = base_url or path.parent
-                rules = self._path_rules(cast(dict[object, object], raw_paths), anchor)
-                defines_paths = True
-            merged = _Config(
-                base_url,
-                rules,
-                merged.references,
-                defines_base_url,
-                defines_paths,
-            )
-        references = self._references(raw.get("references"), path.parent)
+        merged = self._merge_extended(raw, path, seen)
+        merged = self._apply_compiler_options(raw, path, merged)
         return _Config(
             merged.base_url,
             merged.paths,
-            references,
+            self._references(raw.get("references"), path.parent),
             merged.defines_base_url,
             merged.defines_paths,
         )
@@ -268,7 +273,7 @@ class TypeScriptConfigResolver:
         try:
             value = json5.loads(path.read_text(encoding="utf-8"))
             result = cast(dict[str, object], value) if isinstance(value, dict) else None
-        except (OSError, UnicodeError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError):
             result = None
         self._cache[path] = (signature, result)
         return result
@@ -286,7 +291,7 @@ class TypeScriptConfigResolver:
         candidates = [base]
         if base.suffix.lower() != ".json":
             candidates.append(Path(f"{base}.json"))
-        candidates.extend((base / "tsconfig.json", base / "jsconfig.json"))
+        candidates.extend((base / _TSCONFIG, base / _JSCONFIG))
         for candidate in candidates:
             normalized = self._normalize(candidate)
             if not self._has_node_modules(normalized) and normalized.is_file():

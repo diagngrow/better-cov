@@ -15,7 +15,7 @@ const select = <T,>(value: T): T => {
 type Props<T> = { items: T[] };
 export const List = <T,>({ items }: Props<T>) => (
   <ul>
-    {items.map((item) => <li>{String(item)}</li>)}
+    {items.map((item) => <li key={String(item)}>{String(item)}</li>)}
   </ul>
 );
 
@@ -30,5 +30,5 @@ abstract class Repository<T> {
 function parse(value: string): string;
 function parse(value: number): number;
 function parse(value: string | number) {
-  return String(value);
+  return value;
 }
