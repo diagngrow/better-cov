@@ -113,8 +113,9 @@ def test_format_markdown_report_handles_no_functions_and_top_n(capsys) -> None:
     assert "Functions  : 0" in capsys.readouterr().out
 
 
-def test_export_json_and_markdown_create_parent_directories(tmp_path) -> None:
+def test_export_json_and_markdown_create_parent_directories(tmp_path, monkeypatch) -> None:
     """Verify JSON and Markdown exports create parent directories and preserve report data."""
+    monkeypatch.chdir(tmp_path)
     function = make_function(line_rate=0.5, importance=0.75)
     function.indicator_scores = {"import_count": 0.75}
     result = make_result(score=0.75, functions=[function])
@@ -130,3 +131,23 @@ def test_export_json_and_markdown_create_parent_directories(tmp_path) -> None:
     assert data["config"]["total_functions"] == 1
     assert data["functions"][0]["function"] == "run"
     assert "## 📊 Weighted Coverage Report" in markdown_path.read_text(encoding="utf-8")
+
+
+def test_export_markdown_rejects_paths_outside_the_working_directory(
+    tmp_path, monkeypatch
+) -> None:
+    """Verify Markdown exports cannot write outside the working directory."""
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="current working directory"):
+        export_markdown(make_result(), tmp_path.parent / "report.md")
+
+
+def test_export_json_rejects_paths_outside_the_working_directory(
+    tmp_path, monkeypatch
+) -> None:
+    """Verify JSON exports cannot write outside the working directory."""
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ValueError, match="current working directory"):
+        export_json(make_result(), tmp_path.parent / "report.json")

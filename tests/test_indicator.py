@@ -2,8 +2,25 @@ from pathlib import Path
 from typing import NoReturn
 
 from better_cov.indicators.import_count import ImportCountIndicator
+from better_cov.languages.python import PythonLanguageAdapter
 
 _FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_python_fallback_parses_imports_without_regex_backtracking() -> None:
+    """Verify syntax-invalid Python still yields aliased and wildcard imports."""
+    source = "from package.module import first as alias, second, *\ndef broken(:\n"
+
+    references = PythonLanguageAdapter().extract_imports(source, ".py")
+
+    assert [
+        (reference.module, reference.symbols, reference.level)
+        for reference in references
+    ] == [
+        ("package.module", ("first",), 0),
+        ("package.module", ("second",), 0),
+        ("package.module", ("*",), 0),
+    ]
 
 
 def test_compute_counts_and_normalizes_imports() -> None:

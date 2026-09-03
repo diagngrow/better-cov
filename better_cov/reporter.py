@@ -12,6 +12,15 @@ _BAR_WIDTH = 20
 _TOP_N = 10
 
 
+def _safe_output_path(output_path: str | Path) -> Path:
+    """Normalize an output path and keep it within the current directory."""
+    base = Path.cwd().resolve()
+    resolved = Path(output_path).expanduser().resolve(strict=False)
+    if not resolved.is_relative_to(base):
+        raise ValueError("output path must stay within the current working directory")
+    return resolved
+
+
 def _coverage_bar(rate: float, width: int = _BAR_WIDTH) -> str:
     """Generates an ASCII bar representing the coverage rate."""
     filled = round(rate * width)
@@ -155,7 +164,7 @@ def format_markdown_report(result: WeightedCoverageResult, top_n: int = _TOP_N) 
 
 def export_markdown(result: WeightedCoverageResult, output_path: str | Path, top_n: int = _TOP_N) -> None:
     """Exports the Markdown report to a file."""
-    out = Path(output_path)
+    out = _safe_output_path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(format_markdown_report(result, top_n=top_n), encoding="utf-8")
 
@@ -207,6 +216,6 @@ def export_json(result: WeightedCoverageResult, output_path: str | Path) -> None
         ],
     }
 
-    out = Path(output_path)
+    out = _safe_output_path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

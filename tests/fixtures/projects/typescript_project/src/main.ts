@@ -1,4 +1,2 @@
-import type { Options } from "@/lib/tool";
-import { run } from "@/lib/tool";
-export type { Options };
-export { run };
+export type { Options } from "@/lib/tool";
+export { run } from "@/lib/tool";

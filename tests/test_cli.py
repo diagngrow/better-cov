@@ -136,8 +136,9 @@ def test_main_returns_two_for_missing_coverage_report(tmp_path, capsys) -> None:
     assert "Error: coverage.xml not found" in captured.err
 
 
-def test_main_generates_json_and_markdown_reports(tmp_path, capsys) -> None:
+def test_main_generates_json_and_markdown_reports(tmp_path, capsys, monkeypatch) -> None:
     """Verify a pytest-cov report produces JSON and Markdown output."""
+    monkeypatch.chdir(tmp_path)
     project = _FIXTURES / "projects" / "python_project"
     source_dir = project / "src"
     coverage_path = project / "python-cobertura.xml"
@@ -167,8 +168,11 @@ def test_main_generates_json_and_markdown_reports(tmp_path, capsys) -> None:
     assert "Weighted Coverage Report" in markdown_path.read_text(encoding="utf-8")
 
 
-def test_main_auto_detects_jest_project_and_cobertura_report(tmp_path, capsys) -> None:
+def test_main_auto_detects_jest_project_and_cobertura_report(
+    tmp_path, capsys, monkeypatch
+) -> None:
     """Verify project mode runs end to end on Jest Cobertura output."""
+    monkeypatch.chdir(tmp_path)
     project = _FIXTURES / "projects" / "javascript_project"
     output = tmp_path / "result.json"
 
@@ -184,8 +188,11 @@ def test_main_auto_detects_jest_project_and_cobertura_report(tmp_path, capsys) -
     assert data["functions"][0]["importance"] == 1.0
 
 
-def test_main_auto_detects_vitest_project_and_cobertura_report(tmp_path, capsys) -> None:
+def test_main_auto_detects_vitest_project_and_cobertura_report(
+    tmp_path, capsys, monkeypatch
+) -> None:
     """Verify project mode runs end to end on Vitest Cobertura output."""
+    monkeypatch.chdir(tmp_path)
     project = _FIXTURES / "projects" / "typescript_project"
     output = tmp_path / "result.json"
 
@@ -203,8 +210,11 @@ def test_main_auto_detects_vitest_project_and_cobertura_report(tmp_path, capsys)
     assert data["functions"][1]["line_rate"] == 0.0
 
 
-def test_main_returns_one_when_score_is_below_threshold(tmp_path, capsys) -> None:
+def test_main_returns_one_when_score_is_below_threshold(
+    tmp_path, capsys, monkeypatch
+) -> None:
     """Verify a score below the requested threshold returns exit code 1."""
+    monkeypatch.chdir(tmp_path)
     source_dir = _FIXTURES / "projects" / "python_cli_project" / "src"
     coverage_path = tmp_path / "coverage.xml"
     write_coverage_report(coverage_path)
@@ -228,8 +238,11 @@ def test_main_returns_one_when_score_is_below_threshold(tmp_path, capsys) -> Non
     assert "threshold 100.0%" in captured.err
 
 
-def test_main_warns_and_exports_when_report_contains_no_functions(tmp_path, capsys) -> None:
+def test_main_warns_and_exports_when_report_contains_no_functions(
+    tmp_path, capsys, monkeypatch
+) -> None:
     """Verify an empty coverage report warns and still produces an empty result."""
+    monkeypatch.chdir(tmp_path)
     coverage_path = tmp_path / "coverage.xml"
     coverage_path.write_text("<coverage><packages /></coverage>", encoding="utf-8")
     output_path = tmp_path / "result.json"

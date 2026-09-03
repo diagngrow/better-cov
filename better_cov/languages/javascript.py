@@ -36,6 +36,13 @@ _TYPE_CONTEXTS = {
 _EXPORT_DEFAULT = "export default"
 _TYPEOF_PREFIX = "typeof "
 _TYPE_PREFIX = "type "
+_ASSIGNMENT_WRAPPERS = {
+    "as_expression",
+    "non_null_expression",
+    "parenthesized_expression",
+    "satisfies_expression",
+    "type_assertion",
+}
 
 
 def _parse(source: str, language: Language = _JS_LANGUAGE) -> tuple[Tree, bytes]:
@@ -99,26 +106,21 @@ def _class_name(body: Node, data: bytes) -> str:
     return ""
 
 
-def _assigned_name(node: Node, data: bytes) -> str:
-    """Resolve the name associated with a syntax node."""
-    own = _name(_field(node, "name"), data)
+def _unwrap_assignment(node: Node) -> Node:
+    """Return the outermost wrapper around an assigned expression."""
     current = node
-    parent = current.parent
-    while parent is not None and parent.type in {
-        "as_expression",
-        "non_null_expression",
-        "parenthesized_expression",
-        "satisfies_expression",
-        "type_assertion",
-    }:
-        current, parent = parent, parent.parent
-    if parent is None:
-        return own
-    if parent.type == "variable_declarator" and _field(parent, "value") == current:
+    while current.parent is not None and current.parent.type in _ASSIGNMENT_WRAPPERS:
+        current = current.parent
+    return current
+
+
+def _bound_name_from_parent(node: Node, parent: Node, data: bytes) -> str | None:
+    """Resolve a binding name from an expression's effective parent."""
+    if parent.type == "variable_declarator" and _field(parent, "value") == node:
         return _name(_field(parent, "name"), data)
-    if parent.type == "assignment_expression" and _field(parent, "right") == current:
+    if parent.type == "assignment_expression" and _field(parent, "right") == node:
         return _name(_field(parent, "left"), data)
-    if parent.type == "pair" and _field(parent, "value") == current:
+    if parent.type == "pair" and _field(parent, "value") == node:
         return _name(_field(parent, "key"), data)
     if parent.type in {"field_definition", "public_field_definition"}:
         name = _name(_field(parent, "property") or _field(parent, "name"), data)
@@ -127,6 +129,19 @@ def _assigned_name(node: Node, data: bytes) -> str:
             owner = _class_name(body, data)
             return f"{owner}.{name}" if owner and name else name
         return name
+    return None
+
+
+def _assigned_name(node: Node, data: bytes) -> str:
+    """Resolve the name associated with a syntax node."""
+    own = _name(_field(node, "name"), data)
+    current = _unwrap_assignment(node)
+    parent = current.parent
+    if parent is None:
+        return own
+    bound = _bound_name_from_parent(current, parent, data)
+    if bound is not None:
+        return bound
     if parent.type == "export_statement" and "default" in _text(parent, data)[: node.start_byte - parent.start_byte]:
         return own or "default"
     return own
@@ -212,7 +227,7 @@ def _import_symbols(
     data: bytes,
     *,
     typescript: bool,
-) -> tuple[str, ...] | None:
+) -> list[str] | None:
     """Extract imported symbols from an import statement."""
     prefix = _text(node, data).lstrip()
     if typescript and prefix.startswith("import type"):
@@ -222,15 +237,15 @@ def _import_symbols(
         None,
     )
     if require_clause is not None:
-        return ("default",)
+        return ["default"]
     clause = next(
         (child for child in node.named_children if child.type == "import_clause"),
         None,
     )
     if clause is None:
-        return ()
+        return []
     symbols, skipped_type = _import_clause_symbols(clause, data, typescript)
-    return None if skipped_type and not symbols else symbols
+    return None if skipped_type and not symbols else list(symbols)
 
 
 def _pattern_symbols(pattern: Node | None, data: bytes) -> tuple[str, ...]:
@@ -322,7 +337,7 @@ def _import_reference(
         source = _field(require_clause, "source") if require_clause is not None else None
     symbols = _import_symbols(node, data, typescript=typescript)
     return (
-        ImportReference(_string(source, data), symbols)
+        ImportReference(_string(source, data), tuple(symbols))
         if source is not None and symbols is not None
         else None
     )
@@ -408,25 +423,45 @@ def _export_specifiers(node: Node, data: bytes, typescript: bool) -> dict[str, s
     return exports
 
 
+def _is_type_export(text: str, declaration: Node | None, typescript: bool) -> bool:
+    """Return whether an export statement only declares TypeScript types."""
+    return typescript and (
+        text.startswith("export type")
+        or (declaration is not None and declaration.type in _TYPE_DECLARATIONS)
+    )
+
+
+def _declaration_exports(
+    declaration: Node,
+    data: bytes,
+    is_default: bool,
+) -> dict[str, str]:
+    """Map names declared by an export declaration."""
+    names = _declared_names(declaration, data)
+    if is_default:
+        return {"default": names[0] if names else "default"}
+    return {name: name for name in names}
+
+
+def _default_export_name(node: Node, data: bytes) -> str:
+    """Resolve the local name of an expression exported as the default."""
+    value = _field(node, "value")
+    if value is not None and value.type in {"identifier", "type_identifier"}:
+        return _text(value, data)
+    return "default"
+
+
 def _export_statement_map(node: Node, data: bytes, typescript: bool) -> dict[str, str]:
     """Map exports declared by one export statement."""
     text = _text(node, data).lstrip()
-    if typescript and text.startswith("export type"):
-        return {}
     declaration = _field(node, "declaration")
-    if typescript and declaration is not None and declaration.type in _TYPE_DECLARATIONS:
+    if _is_type_export(text, declaration, typescript):
         return {}
     exports = _export_specifiers(node, data, typescript)
     if declaration is not None:
-        names = _declared_names(declaration, data)
-        if text.startswith(_EXPORT_DEFAULT):
-            exports["default"] = names[0] if names else "default"
-        else:
-            exports.update((name, name) for name in names)
-    if declaration is None and text.startswith(_EXPORT_DEFAULT):
-        value = _field(node, "value")
-        is_identifier = value is not None and value.type in {"identifier", "type_identifier"}
-        exports["default"] = _text(value, data) if is_identifier else "default"
+        exports.update(_declaration_exports(declaration, data, text.startswith(_EXPORT_DEFAULT)))
+    elif text.startswith(_EXPORT_DEFAULT):
+        exports["default"] = _default_export_name(node, data)
     return exports
 
 

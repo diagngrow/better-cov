@@ -5,9 +5,9 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 echo "Running Ruff..."
-uv run ruff check .
+uv run --no-project --no-build ruff check .
 
 echo "Running tests..."
-uv run pytest
+uv run --no-project --no-build pytest
 
 echo "Pre-commit checks passed."

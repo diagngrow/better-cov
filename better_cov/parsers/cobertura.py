@@ -16,6 +16,8 @@ from better_cov.languages.python import PythonLanguageAdapter
 from better_cov.languages.registry import detect_language_adapter
 from better_cov.models import FunctionCoverage
 
+_MODULE = "<module>"
+
 
 def _safe_float(value: str | None, default: float = 0.0) -> float:
     """Converts a string to float, returns default on failure."""
@@ -64,6 +66,24 @@ def _extract_function_ranges(source: str) -> list[FunctionRange]:
     return PythonLanguageAdapter().extract_function_ranges(source, ".py")
 
 
+def _function_index_for_line(
+    lineno: int,
+    func_ranges: list[FunctionRange],
+) -> int | None:
+    """Return the narrowest function range containing a line."""
+    matches = [
+        (index, function_range)
+        for index, function_range in enumerate(func_ranges)
+        if function_range.start <= lineno <= function_range.end
+    ]
+    if not matches:
+        return None
+    return min(
+        matches,
+        key=lambda item: (item[1].end - item[1].start, -item[1].start),
+    )[0]
+
+
 def _assign_lines_to_functions(
     line_hits: dict[int, int],
     func_ranges: list[FunctionRange],
@@ -80,7 +100,7 @@ def _assign_lines_to_functions(
         return [
             FunctionCoverage(
                 file=filename,
-                function="<module>",
+                function=_MODULE,
                 line_rate=rate,
                 lines_covered=covered,
                 lines_total=total,
@@ -93,16 +113,8 @@ def _assign_lines_to_functions(
     module_total = 0
 
     for lineno, hits in line_hits.items():
-        matches = [
-            (index, function_range)
-            for index, function_range in enumerate(func_ranges)
-            if function_range.start <= lineno <= function_range.end
-        ]
-        if matches:
-            index, _ = min(
-                matches,
-                key=lambda item: (item[1].end - item[1].start, -item[1].start),
-            )
+        index = _function_index_for_line(lineno, func_ranges)
+        if index is not None:
             func_total[index] += 1
             if hits > 0:
                 func_covered[index] += 1
@@ -131,7 +143,7 @@ def _assign_lines_to_functions(
         results.append(
             FunctionCoverage(
                 file=filename,
-                function="<module>",
+                function=_MODULE,
                 line_rate=module_covered / module_total,
                 lines_covered=module_covered,
                 lines_total=module_total,
@@ -173,6 +185,26 @@ def _line_hits_from_element(element: ET.Element) -> dict[int, int]:
     return line_hits
 
 
+def _method_coverage(method: ET.Element) -> tuple[float, int, int]:
+    """Return a method's line rate and covered/total line counts."""
+    line_rate_attr = method.get("line-rate")
+    covered, total = _count_lines_from_element(method)
+    if line_rate_attr is None:
+        hits = _safe_int(method.get("hits"))
+        if total == 0:
+            covered, total = (1, 1) if hits > 0 else (0, 1)
+        line_rate = covered / total
+    else:
+        line_rate = _safe_float(line_rate_attr)
+        if total == 0:
+            if 0.0 < line_rate < 1.0:
+                fraction = Fraction(str(line_rate))
+                covered, total = fraction.numerator, fraction.denominator
+            else:
+                covered, total = (1, 1) if line_rate >= 1.0 else (0, 1)
+    return line_rate, covered, total
+
+
 def _coverage_from_methods(
     methods: list[ET.Element],
     filename: str,
@@ -180,21 +212,7 @@ def _coverage_from_methods(
     """Build method coverage, including Istanbul's hits-only variant."""
     results: list[FunctionCoverage] = []
     for method in methods:
-        line_rate_attr = method.get("line-rate")
-        covered, total = _count_lines_from_element(method)
-        if line_rate_attr is None:
-            hits = _safe_int(method.get("hits"))
-            if total == 0:
-                covered, total = (1, 1) if hits > 0 else (0, 1)
-            line_rate = covered / total
-        else:
-            line_rate = _safe_float(line_rate_attr)
-            if total == 0:
-                if 0.0 < line_rate < 1.0:
-                    fraction = Fraction(str(line_rate))
-                    covered, total = fraction.numerator, fraction.denominator
-                else:
-                    covered, total = (1, 1) if line_rate >= 1.0 else (0, 1)
+        line_rate, covered, total = _method_coverage(method)
         results.append(
             FunctionCoverage(
                 file=filename,
@@ -226,7 +244,7 @@ def _class_coverage(
         try:
             source = src_file.read_text(encoding="utf-8", errors="replace")
             func_ranges = adapter.extract_function_ranges(source, src_file.suffix.lower())
-            if func_ranges or not methods:
+            if func_ranges:
                 return _assign_lines_to_functions(line_hits, func_ranges, filename)
         except OSError:
             pass
@@ -237,7 +255,7 @@ def _class_coverage(
     return [
         FunctionCoverage(
             file=filename,
-            function="<module>",
+            function=_MODULE,
             line_rate=covered / total,
             lines_covered=covered,
             lines_total=total,

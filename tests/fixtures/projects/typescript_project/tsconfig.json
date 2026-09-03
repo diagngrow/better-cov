@@ -1,6 +1,7 @@
 {
   // The alias used by the TypeScript fixture.
   "compilerOptions": {
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],

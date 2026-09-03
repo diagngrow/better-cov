@@ -176,6 +176,25 @@ def test_parse_pytest_cov_report_extracts_functions_with_ast() -> None:
     ]
 
 
+def test_parse_coverage_xml_falls_back_to_module_when_source_has_no_functions(
+    tmp_path,
+) -> None:
+    """Verify a readable source without functions uses the module-level fallback."""
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (source_root / "module.py").write_text("value = 1\n", encoding="utf-8")
+    report = tmp_path / "coverage.xml"
+    report.write_text(
+        """<coverage><packages><package><classes><class filename="module.py"><lines /></class>
+</classes></package></packages></coverage>""",
+        encoding="utf-8",
+    )
+
+    assert parse_coverage_xml(report, source_roots=[source_root]) == [
+        FunctionCoverage("module.py", "<module>", 0.0, 0, 1)
+    ]
+
+
 def test_parse_coverage_xml_falls_back_to_file_level_when_source_is_missing(tmp_path) -> None:
     """Verify missing source files fall back to file-level coverage."""
     report = tmp_path / "coverage.xml"

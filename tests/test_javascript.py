@@ -50,7 +50,8 @@ def test_javascript_extracts_esm_commonjs_and_dynamic_imports() -> None:
     source = _read_fixture("sources", "javascript", "imports.js")
 
     assert JavaScriptLanguageAdapter().extract_imports(source, ".js") == [
-        ImportReference("./esm", ("default", "named", "original")),
+        ImportReference("./esm", ("default",)),
+        ImportReference("./esm", ("named", "original")),
         ImportReference("./toolkit", ("*",)),
         ImportReference("./setup"),
         ImportReference("./fs", ("read", "write")),

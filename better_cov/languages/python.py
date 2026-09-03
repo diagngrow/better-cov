@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 from better_cov.languages.base import (
@@ -13,9 +12,8 @@ from better_cov.languages.base import (
     source_file_index,
 )
 
-_FROM_IMPORT_RE = re.compile(
-    r"^[ \t]*from[ \t]+([A-Za-z0-9_.]+)[ \t]+import[ \t]+([^\r\n]+)$",
-    re.MULTILINE,
+_IMPORT_MODULE_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_."
 )
 
 
@@ -63,14 +61,21 @@ def _from_import_reference(
     return ImportReference(symbol, level=level)
 
 
-def _extract_import_pairs_regex(source: str) -> list[ImportReference]:
-    """Extract from-import references with a regular-expression fallback."""
+def _extract_import_pairs_fallback(source: str) -> list[ImportReference]:
+    """Extract from-import references from syntax-invalid source."""
     references: list[ImportReference] = []
-    for match in _FROM_IMPORT_RE.finditer(source):
-        raw_module = match.group(1).strip()
+    for line in source.splitlines():
+        parts = line.lstrip().split(None, 3)
+        if len(parts) != 4 or parts[0] != "from" or parts[2] != "import":
+            continue
+        raw_module, raw_symbols = parts[1], parts[3]
+        if not raw_module or any(
+            char not in _IMPORT_MODULE_CHARS for char in raw_module
+        ):
+            continue
         level = len(raw_module) - len(raw_module.lstrip("."))
         module = raw_module[level:]
-        symbols = match.group(2).strip().strip("()")
+        symbols = raw_symbols.strip().strip("()")
         for raw_symbol in symbols.split(","):
             symbol = raw_symbol.strip().split(" as ")[0].strip()
             if symbol:
@@ -79,11 +84,11 @@ def _extract_import_pairs_regex(source: str) -> list[ImportReference]:
 
 
 def _extract_import_pairs(source: str) -> list[ImportReference]:
-    """Extract import references using the AST or regex fallback."""
+    """Extract import references using the AST or line-based fallback."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return _extract_import_pairs_regex(source)
+        return _extract_import_pairs_fallback(source)
     references: list[ImportReference] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
