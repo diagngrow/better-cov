@@ -1,5 +1,5 @@
 from better_cov.indicators.base import ImportanceIndicator
-from better_cov.parsers.cobertura import FunctionCoverage
+from better_cov.models import FunctionCoverage
 from better_cov.scorer import (
     IndicatorConfig,
     _lookup_score,
@@ -29,6 +29,9 @@ def test_lookup_score_supports_symbol_and_file_path_variants() -> None:
     assert _lookup_score("module.py", {"module.py": 0.6}, "run") == 0.6
     assert _lookup_score("src/module.py", {"module.py": 0.5}, "run") == 0.5
     assert _lookup_score("module.py", {}, "run") == 0.0
+    assert _lookup_score("src\\module.ts", {"src/module.ts::Worker": 0.9}, "Worker.run") == 0.9
+    assert _lookup_score("src/my_module.py", {"module.py::run": 0.8}, "run") == 0.0
+    assert _lookup_score("src/my_module.py", {"module.py": 0.6}, "run") == 0.0
 
 
 def test_compute_weighted_coverage_combines_indicators_and_raw_coverage() -> None:

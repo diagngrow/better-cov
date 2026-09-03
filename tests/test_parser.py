@@ -1,9 +1,13 @@
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pytest
 
+from better_cov.models import FunctionCoverage
 from better_cov.parsers import cobertura
-from better_cov.parsers.cobertura import FunctionCoverage, parse_coverage_xml
+from better_cov.parsers.cobertura import parse_coverage_xml
+
+_FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_safe_converters_use_defaults_for_missing_and_invalid_values() -> None:
@@ -13,6 +17,8 @@ def test_safe_converters_use_defaults_for_missing_and_invalid_values() -> None:
     assert cobertura._safe_float("2.5") == 2.5
     assert cobertura._safe_int(None) == 0
     assert cobertura._safe_int("invalid", default=3) == 3
+    assert cobertura._safe_int("1.0") == 1
+    assert cobertura._safe_int("1.5", default=3) == 3
     assert cobertura._safe_int("4") == 4
 
 
@@ -27,19 +33,9 @@ def test_count_lines_from_element_counts_positive_hits() -> None:
 
 def test_extract_function_ranges_handles_classes_async_and_nested_functions() -> None:
     """Verify AST extraction handles top-level, nested, class, and async functions."""
-    source = """\
-def top():
-    def nested():
-        return 1
-    return nested()
-
-class Worker:
-    def run(self):
-        return 2
-
-async def wait():
-    return 3
-"""
+    source = (_FIXTURES / "projects" / "python_project" / "src" / "function_forms.py").read_text(
+        encoding="utf-8"
+    )
     ranges = cobertura._extract_function_ranges(source)
 
     assert [(item.name, item.start, item.end) for item in ranges] == [
@@ -48,7 +44,10 @@ async def wait():
         ("Worker.run", 7, 8),
         ("wait", 10, 11),
     ]
-    assert cobertura._extract_function_ranges("def broken(:\n") == []
+    invalid_source = (_FIXTURES / "sources" / "python" / "invalid_imports.txt").read_text(
+        encoding="utf-8"
+    )
+    assert cobertura._extract_function_ranges(invalid_source) == []
 
 
 def test_assign_lines_to_functions_includes_module_lines() -> None:
@@ -61,6 +60,27 @@ def test_assign_lines_to_functions_includes_module_lines() -> None:
     assert results == [
         FunctionCoverage("module.py", "run", 0.5, 1, 2),
         FunctionCoverage("module.py", "<module>", 0.5, 1, 2),
+    ]
+
+
+def test_assign_lines_prefers_nested_ranges_and_keeps_duplicate_names() -> None:
+    """Verify nested and duplicate function names keep independent coverage."""
+    ranges = [
+        cobertura._FuncRange(name="same", start=1, end=5),
+        cobertura._FuncRange(name="inner", start=2, end=3),
+        cobertura._FuncRange(name="same", start=10, end=10),
+    ]
+
+    results = cobertura._assign_lines_to_functions(
+        {1: 1, 2: 0, 3: 1, 5: 0, 10: 1},
+        ranges,
+        "module.js",
+    )
+
+    assert results == [
+        FunctionCoverage("module.js", "same", 0.5, 1, 2),
+        FunctionCoverage("module.js", "inner", 0.5, 1, 2),
+        FunctionCoverage("module.js", "same", 1.0, 1, 1),
     ]
 
 
@@ -78,11 +98,26 @@ def test_find_source_file_checks_xml_directory_and_source_roots(tmp_path) -> Non
     source_root.mkdir()
     xml_file = xml_dir / "from-report.py"
     source_file = source_root / "from-root.py"
+    nested_root = tmp_path / "workspace" / "src"
+    nested_root.mkdir(parents=True)
+    nested_file = nested_root / "index.ts"
+    ancestor_file = tmp_path / "outside.py"
     xml_file.write_text("", encoding="utf-8")
     source_file.write_text("", encoding="utf-8")
+    nested_file.write_text("", encoding="utf-8")
+    ancestor_file.write_text("", encoding="utf-8")
 
     assert cobertura._find_source_file("from-report.py", xml_dir, [source_root]) == xml_file
     assert cobertura._find_source_file("from-root.py", xml_dir, [source_root]) == source_file
+    assert (
+        cobertura._find_source_file(
+            "packages/app/src/index.ts",
+            xml_dir,
+            [nested_root],
+        )
+        == nested_file
+    )
+    assert cobertura._find_source_file("outside.py", xml_dir, [source_root]) is None
     assert cobertura._find_source_file("missing.py", xml_dir, [source_root]) is None
 
 
@@ -105,6 +140,7 @@ def test_parse_coverage_xml_reads_method_level_reports(tmp_path) -> None:
           <lines><line number="1" hits="2"/><line number="2" hits="0"/></lines>
         </method>
         <method name="empty" line-rate="0.0" />
+        <method name="half-without-lines" line-rate="0.5" />
         <method name="full-without-lines" line-rate="1.0" />
       </methods>
     </class>
@@ -119,52 +155,25 @@ def test_parse_coverage_xml_reads_method_level_reports(tmp_path) -> None:
     assert result == [
         FunctionCoverage("module.py", "covered", 1.0, 1, 2),
         FunctionCoverage("module.py", "empty", 0.0, 0, 1),
+        FunctionCoverage("module.py", "half-without-lines", 0.5, 1, 2),
         FunctionCoverage("module.py", "full-without-lines", 1.0, 1, 1),
     ]
 
 
-def test_parse_coverage_xml_extracts_functions_with_ast(tmp_path) -> None:
-    """Verify AST fallback extracts function coverage and preserves module-level lines."""
-    source_root = tmp_path / "src"
-    source_root.mkdir()
-    (source_root / "module.py").write_text(
-        """\
-def alpha():
-    return 1
-
-class Worker:
-    def beta(self):
-        return 2
-
-async def gamma():
-    return 3
-
-constant = 4
-""",
-        encoding="utf-8",
-    )
-    report = tmp_path / "coverage.xml"
-    report.write_text(
-        """\
-<coverage><packages><package><classes><class filename="module.py"><lines>
-  <line number="1" hits="1"/><line number="2" hits="1"/>
-  <line number="5" hits="1"/><line number="6" hits="0"/>
-  <line number="8" hits="0"/><line number="9" hits="0"/>
-  <line number="11" hits="1"/>
-</lines></class></classes></package></packages></coverage>
-""",
-        encoding="utf-8",
-    )
+def test_parse_pytest_cov_report_extracts_functions_with_ast() -> None:
+    """Verify a pytest-cov report maps coverage.py lines to Python functions."""
+    project = _FIXTURES / "projects" / "python_project"
+    source_root = project / "src"
+    report = project / "python-cobertura.xml"
 
     result = parse_coverage_xml(report, source_roots=[source_root])
 
-    assert [(item.function, item.lines_covered, item.lines_total) for item in result] == [
-        ("alpha", 2, 2),
-        ("Worker.beta", 1, 2),
-        ("gamma", 0, 2),
-        ("<module>", 1, 1),
+    assert result == [
+        FunctionCoverage("src/module.py", "alpha", 1.0, 2, 2),
+        FunctionCoverage("src/module.py", "Worker.beta", 1.0, 2, 2),
+        FunctionCoverage("src/module.py", "gamma", 0.5, 1, 2),
+        FunctionCoverage("src/module.py", "<module>", 1.0, 2, 2),
     ]
-    assert result[1].line_rate == 0.5
 
 
 def test_parse_coverage_xml_falls_back_to_file_level_when_source_is_missing(tmp_path) -> None:
@@ -212,7 +221,7 @@ def test_parse_coverage_xml_falls_back_when_source_cannot_be_read(tmp_path, monk
     source_root = tmp_path / "src"
     source_root.mkdir()
     source_file = source_root / "module.py"
-    source_file.write_text("def run():\n    return 1\n", encoding="utf-8")
+    source_file.write_text("", encoding="utf-8")
     report = tmp_path / "coverage.xml"
     report.write_text(
         """\
@@ -231,4 +240,52 @@ def test_parse_coverage_xml_falls_back_when_source_cannot_be_read(tmp_path, monk
     monkeypatch.setattr(cobertura.Path, "read_text", fail_read_text)
     assert parse_coverage_xml(report, source_roots=[source_root]) == [
         FunctionCoverage("module.py", "<module>", 0.5, 1, 2)
+    ]
+
+
+def test_parse_jest_report_uses_javascript_ranges_for_istanbul_methods() -> None:
+    """Verify a Jest report maps Istanbul class lines to JavaScript functions."""
+    project = _FIXTURES / "projects" / "javascript_project"
+    result = parse_coverage_xml(
+        project / "coverage" / "cobertura-coverage.xml",
+        source_roots=[project / "src"],
+        language="javascript",
+    )
+
+    assert result == [FunctionCoverage("src/module.js", "run", 0.75, 3, 4)]
+
+
+def test_parse_vitest_report_uses_typescript_ranges_for_istanbul_methods() -> None:
+    """Verify a Vitest report maps remapped V8 lines to TypeScript functions."""
+    project = _FIXTURES / "projects" / "typescript_project"
+    result = parse_coverage_xml(
+        project / "coverage" / "cobertura-coverage.xml",
+        source_roots=[project / "src"],
+        language="typescript",
+    )
+
+    assert result == [
+        FunctionCoverage("src/lib/tool.ts", "run", 0.5, 1, 2),
+        FunctionCoverage("src/lib/tool.ts", "unused", 0.0, 0, 1),
+    ]
+
+
+def test_parse_coverage_xml_uses_istanbul_hits_when_javascript_source_is_missing(
+    tmp_path,
+) -> None:
+    """Verify missing JavaScript source falls back to binary method hits."""
+    report = tmp_path / "coverage.xml"
+    report.write_text(
+        """\
+<coverage><packages><package><classes><class filename="missing.js"><methods>
+  <method name="covered" hits="2"><lines><line number="1" hits="2"/></lines></method>
+  <method name="missed" hits="0"><lines><line number="4" hits="0"/></lines></method>
+</methods></class></classes></package></packages></coverage>
+""",
+        encoding="utf-8",
+    )
+
+    assert parse_coverage_xml(report, language="javascript") == [
+        FunctionCoverage("missing.js", "covered", 1.0, 1, 1),
+        FunctionCoverage("missing.js", "missed", 0.0, 0, 1),
     ]

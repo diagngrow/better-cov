@@ -1,0 +1,32 @@
+<?xml version="1.0" ?>
+<!DOCTYPE coverage SYSTEM "http://cobertura.sourceforge.net/xml/coverage-04.dtd">
+<coverage lines-valid="3" lines-covered="1" line-rate="0.3333" branches-valid="2" branches-covered="1" branch-rate="0.5" timestamp="0" complexity="0" version="0.1">
+  <sources>
+    <source>.</source>
+  </sources>
+  <packages>
+    <package name="main" line-rate="0.3333" branch-rate="0.5">
+      <classes>
+        <class name="tool.ts" filename="src/lib/tool.ts" line-rate="0.3333" branch-rate="0.5">
+          <methods>
+            <method name="run" hits="1" signature="()V">
+              <lines>
+                <line number="3" hits="1"/>
+              </lines>
+            </method>
+            <method name="unused" hits="0" signature="()V">
+              <lines>
+                <line number="8" hits="0"/>
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="4" hits="1" branch="true" condition-coverage="50% (1/2)"/>
+            <line number="5" hits="0" branch="false"/>
+            <line number="9" hits="0" branch="false"/>
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>

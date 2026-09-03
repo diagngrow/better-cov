@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from better_cov.indicators.base import ImportanceIndicator
-from better_cov.parsers.cobertura import FunctionCoverage
+from better_cov.models import FunctionCoverage
 
 
 @dataclass
@@ -93,8 +93,11 @@ def compute_weighted_coverage(
         )
 
     indicator_scores_map: dict[str, dict[str, float]] = {}
+    indicator_score_indexes: dict[str, _ScoreIndex] = {}
     for ic in indicator_configs:
-        indicator_scores_map[ic.indicator.name] = ic.indicator.compute(source_dirs)
+        scores = ic.indicator.compute(source_dirs)
+        indicator_scores_map[ic.indicator.name] = scores
+        indicator_score_indexes[ic.indicator.name] = _build_score_index(scores)
 
     total_weight = sum(ic.weight for ic in indicator_configs) or 1.0
 
@@ -105,7 +108,12 @@ def compute_weighted_coverage(
 
         for ic in indicator_configs:
             scores = indicator_scores_map[ic.indicator.name]
-            score = _lookup_score(fc.file, scores, fc.function)
+            score = _lookup_score(
+                fc.file,
+                scores,
+                fc.function,
+                index=indicator_score_indexes[ic.indicator.name],
+            )
             raw_scores[ic.indicator.name] = score
             composite_importance += score * ic.weight
 
@@ -156,32 +164,104 @@ def compute_weighted_coverage(
     )
 
 
-def _lookup_score(file_path: str, scores: dict[str, float], function: str = "") -> float:
-    """Looks up the score of a function in a scores dict.
+@dataclass(frozen=True)
+class _PathScore:
+    path: tuple[str, ...]
+    score: float
 
-    Resolution order:
-    1. Exact key ``file_path::function`` (per-symbol indicators).
-    2. Exact key ``file_path`` alone (per-file indicators, backward compat).
-    3. Suffix match on both forms (relative/absolute paths).
-    """
-    if function:
-        exact_sym = f"{file_path}::{function}"
-        if exact_sym in scores:
-            return scores[exact_sym]
 
-        for key, value in scores.items():
-            if "::" in key:
-                file_part, sym_part = key.rsplit("::", 1)
-                if sym_part == function and (
-                    file_part.endswith(file_path) or file_path.endswith(file_part)
-                ):
-                    return value
+@dataclass
+class _ScoreIndex:
+    symbols: dict[str, list[_PathScore]] = field(default_factory=dict)
+    files: dict[str, list[_PathScore]] = field(default_factory=dict)
 
-    if file_path in scores:
-        return scores[file_path]
 
-    for key, value in scores.items():
-        if "::" not in key and (key.endswith(file_path) or file_path.endswith(key)):
-            return value
+def _path_segments(path: str) -> tuple[str, ...]:
+    """Normalize a path into non-empty slash-delimited segments."""
+    return tuple(part for part in path.replace("\\", "/").split("/") if part)
 
+
+def _paths_match(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
+    """Match equal paths or complete suffixes without partial filename matches."""
+    if not left or not right:
+        return False
+    return (
+        len(left) >= len(right) and left[-len(right) :] == right
+    ) or (
+        len(right) >= len(left) and right[-len(left) :] == left
+    )
+
+
+def _build_score_index(scores: dict[str, float]) -> _ScoreIndex:
+    """Index score entries by symbol while retaining file-level fallbacks."""
+    index = _ScoreIndex()
+    for key, score in scores.items():
+        if "::" in key:
+            file_part, symbol = key.rsplit("::", 1)
+            index.symbols.setdefault(symbol, []).append(
+                _PathScore(_path_segments(file_part), score)
+            )
+        else:
+            path = _path_segments(key)
+            if path:
+                index.files.setdefault(path[-1], []).append(_PathScore(path, score))
+    return index
+
+
+def _symbol_score(
+    file_path: str,
+    normalized_file: str,
+    file_segments: tuple[str, ...],
+    function: str,
+    scores: dict[str, float],
+    index: _ScoreIndex,
+) -> float | None:
+    """Look up an exact or suffix-matched symbol score."""
+    symbols = [function] if function else []
+    if "." in function:
+        symbols.append(function.rsplit(".", 1)[0])
+    for symbol in symbols:
+        for exact_key in (f"{file_path}::{symbol}", f"{normalized_file}::{symbol}"):
+            if exact_key in scores:
+                return scores[exact_key]
+        for candidate in index.symbols.get(symbol, []):
+            if _paths_match(candidate.path, file_segments):
+                return candidate.score
+    return None
+
+
+def _file_score(
+    file_path: str,
+    normalized_file: str,
+    file_segments: tuple[str, ...],
+    scores: dict[str, float],
+    index: _ScoreIndex,
+) -> float:
+    """Look up an exact or suffix-matched file score."""
+    for exact_key in (file_path, normalized_file):
+        if exact_key in scores:
+            return scores[exact_key]
+    file_candidates = index.files.get(file_segments[-1], []) if file_segments else []
+    for candidate in file_candidates:
+        if _paths_match(candidate.path, file_segments):
+            return candidate.score
     return 0.0
+
+
+def _lookup_score(
+    file_path: str,
+    scores: dict[str, float],
+    function: str = "",
+    *,
+    index: _ScoreIndex | None = None,
+) -> float:
+    """Looks up symbol, containing class, and file scores across path variants."""
+    normalized_file = file_path.replace("\\", "/")
+    file_segments = _path_segments(normalized_file)
+    score_index = index or _build_score_index(scores)
+    symbol_score = _symbol_score(
+        file_path, normalized_file, file_segments, function, scores, score_index
+    )
+    return symbol_score if symbol_score is not None else _file_score(
+        file_path, normalized_file, file_segments, scores, score_index
+    )

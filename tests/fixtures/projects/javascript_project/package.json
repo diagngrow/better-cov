@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "devDependencies": {
+    "jest": "30.4.2"
+  },
+  "scripts": {
+    "coverage": "jest --coverage"
+  },
+  "jest": {
+    "collectCoverageFrom": ["src/module.js"],
+    "coverageReporters": ["cobertura"],
+    "testMatch": ["**/coverage.test.js"]
+  }
+}

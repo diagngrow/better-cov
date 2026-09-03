@@ -2,11 +2,14 @@ import json
 import runpy
 import sys
 import warnings
+from pathlib import Path
 
 import pytest
 
 from better_cov import cli
 from better_cov.cli import _resolve_args, build_parser, main
+
+_FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def write_coverage_report(path, hits: tuple[int, int] = (1, 0)) -> None:
@@ -27,6 +30,7 @@ def test_build_parser_has_documented_defaults_and_options() -> None:
     assert args.project_dir is None
     assert args.coverage_xml == "coverage.xml"
     assert args.source_dirs == ["src/"]
+    assert args.language == "auto"
     assert args.output == "better_cov.json"
     assert args.min_score is None
     assert args.min_importance == 0.1
@@ -41,6 +45,8 @@ def test_build_parser_has_documented_defaults_and_options() -> None:
             "--source-dirs",
             "one",
             "two",
+            "--language",
+            "javascript",
             "--output",
             "result.json",
             "--min-score",
@@ -56,6 +62,7 @@ def test_build_parser_has_documented_defaults_and_options() -> None:
     assert args.project_dir == "project"
     assert args.coverage_xml == "report.xml"
     assert args.source_dirs == ["one", "two"]
+    assert args.language == "javascript"
     assert args.output == "result.json"
     assert args.min_score == 80.0
     assert args.min_importance == 0.2
@@ -74,10 +81,26 @@ def test_resolve_args_uses_direct_project_src_directory(tmp_path) -> None:
     assert resolved.source_dirs == [str(tmp_path / "src")]
 
 
+def test_resolve_args_discovers_jest_vitest_cobertura_report(tmp_path) -> None:
+    """Verify project resolution discovers the standard Istanbul report path."""
+    (tmp_path / "src").mkdir()
+    coverage_dir = tmp_path / "coverage"
+    coverage_dir.mkdir()
+    report = coverage_dir / "cobertura-coverage.xml"
+    report.write_text("<coverage />", encoding="utf-8")
+
+    resolved = _resolve_args(build_parser().parse_args([str(tmp_path)]))
+
+    assert resolved.coverage_xml == str(report)
+
+
 def test_resolve_args_finds_nested_src_directories(tmp_path) -> None:
     """Verify project resolution discovers src directories nested below the root."""
     nested_src = tmp_path / "packages" / "one" / "src"
     nested_src.mkdir(parents=True)
+    (tmp_path / "node_modules" / "dependency" / "src").mkdir(parents=True)
+    (tmp_path / ".git" / "worktree" / "src").mkdir(parents=True)
+    (tmp_path / ".venv" / "package" / "src").mkdir(parents=True)
     args = build_parser().parse_args([str(tmp_path)])
 
     resolved = _resolve_args(args)
@@ -114,21 +137,10 @@ def test_main_returns_two_for_missing_coverage_report(tmp_path, capsys) -> None:
 
 
 def test_main_generates_json_and_markdown_reports(tmp_path, capsys) -> None:
-    """Verify a successful run writes JSON and Markdown reports with status output."""
-    source_dir = tmp_path / "src"
-    source_dir.mkdir()
-    (source_dir / "app.py").write_text(
-        """\
-def used():
-    return 1
-
-def untouched():
-    return 2
-""",
-        encoding="utf-8",
-    )
-    coverage_path = tmp_path / "coverage.xml"
-    write_coverage_report(coverage_path)
+    """Verify a pytest-cov report produces JSON and Markdown output."""
+    project = _FIXTURES / "projects" / "python_project"
+    source_dir = project / "src"
+    coverage_path = project / "python-cobertura.xml"
     json_path = tmp_path / "output" / "better_cov.json"
     markdown_path = tmp_path / "output" / "better_cov.md"
 
@@ -151,18 +163,49 @@ def untouched():
     assert code == 0
     assert "Weighted Coverage Report" in captured.out
     assert "Markdown report" in captured.out
-    assert json.loads(json_path.read_text(encoding="utf-8"))["config"]["total_functions"] == 2
+    assert json.loads(json_path.read_text(encoding="utf-8"))["config"]["total_functions"] == 4
     assert "Weighted Coverage Report" in markdown_path.read_text(encoding="utf-8")
+
+
+def test_main_auto_detects_jest_project_and_cobertura_report(tmp_path, capsys) -> None:
+    """Verify project mode runs end to end on Jest Cobertura output."""
+    project = _FIXTURES / "projects" / "javascript_project"
+    output = tmp_path / "result.json"
+
+    code = main([str(project), "--output", str(output)])
+
+    assert code == 0
+    assert "Weighted Coverage Report" in capsys.readouterr().out
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["config"]["total_functions"] == 1
+    assert data["functions"][0]["file"] == "src/module.js"
+    assert data["functions"][0]["function"] == "run"
+    assert data["functions"][0]["line_rate"] == 0.75
+    assert data["functions"][0]["importance"] == 1.0
+
+
+def test_main_auto_detects_vitest_project_and_cobertura_report(tmp_path, capsys) -> None:
+    """Verify project mode runs end to end on Vitest Cobertura output."""
+    project = _FIXTURES / "projects" / "typescript_project"
+    output = tmp_path / "result.json"
+
+    code = main([str(project), "--output", str(output)])
+
+    assert code == 0
+    assert "Weighted Coverage Report" in capsys.readouterr().out
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["config"]["total_functions"] == 2
+    assert data["functions"][0]["file"] == "src/lib/tool.ts"
+    assert data["functions"][0]["function"] == "run"
+    assert data["functions"][0]["line_rate"] == 0.5
+    assert data["functions"][0]["importance"] == 1.0
+    assert data["functions"][1]["function"] == "unused"
+    assert data["functions"][1]["line_rate"] == 0.0
 
 
 def test_main_returns_one_when_score_is_below_threshold(tmp_path, capsys) -> None:
     """Verify a score below the requested threshold returns exit code 1."""
-    source_dir = tmp_path / "src"
-    source_dir.mkdir()
-    (source_dir / "app.py").write_text(
-        "def used():\n    return 1\n\ndef untouched():\n    return 2\n",
-        encoding="utf-8",
-    )
+    source_dir = _FIXTURES / "projects" / "python_cli_project" / "src"
     coverage_path = tmp_path / "coverage.xml"
     write_coverage_report(coverage_path)
 

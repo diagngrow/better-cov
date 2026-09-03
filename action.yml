@@ -14,6 +14,10 @@ inputs:
     description: "Source directories to scan (space-separated)"
     required: false
     default: "src/"
+  language:
+    description: "Source language: auto, python, javascript, or typescript"
+    required: false
+    default: "auto"
   min-score:
     description: "Minimum score threshold (fails if below)"
     required: false
@@ -39,15 +43,31 @@ runs:
       run: pip install better-cov
     - name: Run better-cov
       shell: bash
+      env:
+        INPUT_COVERAGE_XML: ${{ inputs.coverage-xml }}
+        INPUT_SOURCE_DIRS: ${{ inputs.source-dirs }}
+        INPUT_LANGUAGE: ${{ inputs.language }}
+        INPUT_OUTPUT: ${{ inputs.output }}
+        INPUT_TOP_N: ${{ inputs.top-n }}
+        INPUT_MIN_SCORE: ${{ inputs.min-score }}
+        INPUT_PR_COMMENT: ${{ inputs.pr-comment }}
       run: |
-        ARGS="--coverage-xml ${{ inputs.coverage-xml }} --source-dirs ${{ inputs.source-dirs }} --output ${{ inputs.output }} --top-n ${{ inputs.top-n }}"
-        if [ -n "${{ inputs.min-score }}" ]; then
-          ARGS="$ARGS --min-score ${{ inputs.min-score }}"
+        set -euo pipefail
+        args=(
+          --coverage-xml "$INPUT_COVERAGE_XML"
+          --language "$INPUT_LANGUAGE"
+          --output "$INPUT_OUTPUT"
+          --top-n "$INPUT_TOP_N"
+        )
+        if [ -n "$INPUT_MIN_SCORE" ]; then
+          args+=(--min-score "$INPUT_MIN_SCORE")
         fi
-        if [ "${{ inputs.pr-comment }}" = "true" ]; then
-          ARGS="$ARGS --markdown-output better_cov_comment.md"
+        if [ "$INPUT_PR_COMMENT" = "true" ]; then
+          args+=(--markdown-output better_cov_comment.md)
         fi
-        better-cov $ARGS
+        read -r -a source_dirs <<< "$INPUT_SOURCE_DIRS"
+        args+=(--source-dirs "${source_dirs[@]}")
+        better-cov "${args[@]}"
     - name: Upload result
       if: always()
       uses: actions/upload-artifact@v4
