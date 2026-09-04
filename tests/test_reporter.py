@@ -138,9 +138,11 @@ def test_export_markdown_rejects_paths_outside_the_working_directory(
 ) -> None:
     """Verify Markdown exports cannot write outside the working directory."""
     monkeypatch.chdir(tmp_path)
+    result = make_result()
+    output_path = tmp_path.parent / "report.md"
 
     with pytest.raises(ValueError, match="current working directory"):
-        export_markdown(make_result(), tmp_path.parent / "report.md")
+        export_markdown(result, output_path)
 
 
 def test_export_json_rejects_paths_outside_the_working_directory(
@@ -148,6 +150,39 @@ def test_export_json_rejects_paths_outside_the_working_directory(
 ) -> None:
     """Verify JSON exports cannot write outside the working directory."""
     monkeypatch.chdir(tmp_path)
+    result = make_result()
+    output_path = tmp_path.parent / "report.json"
 
     with pytest.raises(ValueError, match="current working directory"):
-        export_json(make_result(), tmp_path.parent / "report.json")
+        export_json(result, output_path)
+
+
+def test_export_json_rejects_symlinked_parent_directory(tmp_path, monkeypatch) -> None:
+    """Verify JSON exports do not follow symlinked parent directories."""
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    result = make_result()
+    output_path = link / "report.json"
+
+    with pytest.raises(ValueError, match="symbolic links"):
+        export_json(result, output_path)
+
+    assert not (target / "report.json").exists()
+
+
+def test_export_markdown_rejects_symlinked_output_file(tmp_path, monkeypatch) -> None:
+    """Verify Markdown exports do not overwrite a symlink target."""
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "target.md"
+    target.write_text("original", encoding="utf-8")
+    link = tmp_path / "report.md"
+    link.symlink_to(target)
+    result = make_result()
+
+    with pytest.raises(ValueError, match="symbolic links"):
+        export_markdown(result, link)
+
+    assert target.read_text(encoding="utf-8") == "original"
