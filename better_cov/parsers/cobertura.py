@@ -185,23 +185,40 @@ def _line_hits_from_element(element: ET.Element) -> dict[int, int]:
     return line_hits
 
 
+def _counts_from_hits(
+    method: ET.Element,
+    covered: int,
+    total: int,
+) -> tuple[int, int]:
+    """Return method counts, deriving one line from hits when needed."""
+    if total:
+        return covered, total
+    return (1, 1) if _safe_int(method.get("hits")) > 0 else (0, 1)
+
+
+def _counts_from_line_rate(
+    line_rate: float,
+    covered: int,
+    total: int,
+) -> tuple[int, int]:
+    """Return method counts, deriving them from a line rate when needed."""
+    if total:
+        return covered, total
+    if 0.0 < line_rate < 1.0:
+        fraction = Fraction(str(line_rate))
+        return fraction.numerator, fraction.denominator
+    return (1, 1) if line_rate >= 1.0 else (0, 1)
+
+
 def _method_coverage(method: ET.Element) -> tuple[float, int, int]:
     """Return a method's line rate and covered/total line counts."""
     line_rate_attr = method.get("line-rate")
     covered, total = _count_lines_from_element(method)
     if line_rate_attr is None:
-        hits = _safe_int(method.get("hits"))
-        if total == 0:
-            covered, total = (1, 1) if hits > 0 else (0, 1)
-        line_rate = covered / total
-    else:
-        line_rate = _safe_float(line_rate_attr)
-        if total == 0:
-            if 0.0 < line_rate < 1.0:
-                fraction = Fraction(str(line_rate))
-                covered, total = fraction.numerator, fraction.denominator
-            else:
-                covered, total = (1, 1) if line_rate >= 1.0 else (0, 1)
+        covered, total = _counts_from_hits(method, covered, total)
+        return covered / total, covered, total
+    line_rate = _safe_float(line_rate_attr)
+    covered, total = _counts_from_line_rate(line_rate, covered, total)
     return line_rate, covered, total
 
 
