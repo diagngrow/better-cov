@@ -66,20 +66,43 @@ class TypeScriptConfigResolver:
             return self._resolve_path(importer_path.parent / module, files)
         if Path(module).is_absolute():
             return self._resolve_path(Path(module), files)
-        for config_path in self._config_paths(importer_path, source_dirs):
+        return self._resolve_from_configs(module, importer_path, files, source_dirs)
+
+    def _resolve_from_configs(
+        self,
+        module: str,
+        importer: Path,
+        files: dict[Path, Path],
+        source_dirs: list[Path],
+    ) -> Path | None:
+        """Resolve a non-relative module through local TypeScript configs."""
+        for config_path in self._config_paths(importer, source_dirs):
             config = self._config(config_path, frozenset())
-            matched = self._matching_rule(module, config.paths)
-            if matched is not None:
-                rule, wildcard = matched
-                for target in rule.targets:
-                    replacement = target.replace("*", wildcard)
-                    resolved = self._resolve_path(rule.anchor / replacement, files)
-                    if resolved is not None:
-                        return resolved
+            resolved = self._resolve_path_rule(module, config.paths, files)
+            if resolved is not None:
+                return resolved
             if config.base_url is not None:
                 resolved = self._resolve_path(config.base_url / module, files)
                 if resolved is not None:
                     return resolved
+        return None
+
+    def _resolve_path_rule(
+        self,
+        module: str,
+        rules: tuple[_PathRule, ...],
+        files: dict[Path, Path],
+    ) -> Path | None:
+        """Resolve a module through the first matching paths rule."""
+        matched = self._matching_rule(module, rules)
+        if matched is None:
+            return None
+        rule, wildcard = matched
+        for target in rule.targets:
+            replacement = target.replace("*", wildcard)
+            resolved = self._resolve_path(rule.anchor / replacement, files)
+            if resolved is not None:
+                return resolved
         return None
 
     def _resolve_path(self, path: Path, files: dict[Path, Path]) -> Path | None:

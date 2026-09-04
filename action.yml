@@ -40,7 +40,7 @@ runs:
   steps:
     - name: Install better-cov
       shell: bash
-      run: pip install better-cov
+      run: "pip install --only-binary :all: better-cov==0.2.0"
     - name: Run better-cov
       shell: bash
       env:

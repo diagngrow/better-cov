@@ -2,14 +2,125 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TextIO
 
 from better_cov.scorer import WeightedCoverageResult
 
 _BAR_WIDTH = 20
 _TOP_N = 10
+
+
+def _safe_output_path(
+    output_path: str | Path,
+    base: Path | None = None,
+) -> Path:
+    """Normalize an output path without resolving any output symlinks."""
+    base = Path.cwd().resolve() if base is None else base
+    candidate = Path(output_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    normalized = Path(os.path.normpath(candidate))
+    try:
+        relative = normalized.relative_to(base)
+    except ValueError as error:
+        suffix = [normalized.name]
+        ancestor = normalized.parent
+        while ancestor != ancestor.parent:
+            if ancestor.resolve(strict=False) == base:
+                relative = Path(*reversed(suffix))
+                break
+            suffix.append(ancestor.name)
+            ancestor = ancestor.parent
+        else:
+            raise ValueError(
+                "output path must stay within the current working directory"
+            ) from error
+        normalized = base / relative
+    if not relative.parts:
+        raise ValueError("output path must name a file")
+    return normalized
+
+
+def _supports_secure_output() -> bool:
+    """Return whether the platform supports descriptor-relative no-follow opens."""
+    return (
+        os.open in os.supports_dir_fd
+        and os.mkdir in os.supports_dir_fd
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+    )
+
+
+def _open_directory_component(name: str, parent_fd: int) -> int:
+    """Open or create one output directory without following symlinks."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        return os.open(name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        try:
+            os.mkdir(name, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        return os.open(name, flags, dir_fd=parent_fd)
+
+
+def _open_output_file_fallback(output: Path, base: Path) -> TextIO:
+    """Open an output path with best-effort symlink checks on unsupported platforms."""
+    current = base
+    for component in output.relative_to(base).parts:
+        current /= component
+        if current.is_symlink():
+            raise ValueError("output path must not contain symbolic links")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    return output.open("w", encoding="utf-8")
+
+
+def _open_output_file(output_path: str | Path) -> TextIO:
+    """Open an output relative to cwd while rejecting symlink path components.
+
+    Platforms without descriptor-relative and no-follow open support use a
+    best-effort check because their standard library cannot eliminate the
+    corresponding symlink race.
+    """
+    base = Path.cwd().resolve()
+    output = _safe_output_path(output_path, base)
+    if not _supports_secure_output():
+        return _open_output_file_fallback(output, base)
+
+    relative = output.relative_to(base)
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    base_fd = os.open(".", directory_flags)
+    parent_fd = base_fd
+    try:
+        for component in relative.parts[:-1]:
+            next_fd = _open_directory_component(component, parent_fd)
+            if parent_fd != base_fd:
+                os.close(parent_fd)
+            parent_fd = next_fd
+        output_fd = os.open(
+            relative.parts[-1],
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+            0o666,
+            dir_fd=parent_fd,
+        )
+        try:
+            return os.fdopen(output_fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(output_fd)
+            raise
+    except OSError as error:
+        if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+            raise ValueError("output path must not contain symbolic links") from error
+        raise
+    finally:
+        if parent_fd != base_fd:
+            os.close(parent_fd)
+        os.close(base_fd)
 
 
 def _coverage_bar(rate: float, width: int = _BAR_WIDTH) -> str:
@@ -155,9 +266,8 @@ def format_markdown_report(result: WeightedCoverageResult, top_n: int = _TOP_N) 
 
 def export_markdown(result: WeightedCoverageResult, output_path: str | Path, top_n: int = _TOP_N) -> None:
     """Exports the Markdown report to a file."""
-    out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(format_markdown_report(result, top_n=top_n), encoding="utf-8")
+    with _open_output_file(output_path) as output:
+        output.write(format_markdown_report(result, top_n=top_n))
 
 
 def export_json(result: WeightedCoverageResult, output_path: str | Path) -> None:
@@ -207,6 +317,5 @@ def export_json(result: WeightedCoverageResult, output_path: str | Path) -> None
         ],
     }
 
-    out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    with _open_output_file(output_path) as output:
+        output.write(json.dumps(data, indent=2, ensure_ascii=False))

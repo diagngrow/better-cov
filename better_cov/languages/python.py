@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
-import re
+import io
+import keyword
+import tokenize
 from pathlib import Path
 
 from better_cov.languages.base import (
@@ -11,11 +13,6 @@ from better_cov.languages.base import (
     ImportReference,
     LanguageAdapter,
     source_file_index,
-)
-
-_FROM_IMPORT_RE = re.compile(
-    r"^[ \t]*from[ \t]+([A-Za-z0-9_.]+)[ \t]+import[ \t]+([^\r\n]+)$",
-    re.MULTILINE,
 )
 
 
@@ -63,27 +60,128 @@ def _from_import_reference(
     return ImportReference(symbol, level=level)
 
 
-def _extract_import_pairs_regex(source: str) -> list[ImportReference]:
-    """Extract from-import references with a regular-expression fallback."""
+def _parse_import_module(raw_module: str) -> tuple[int, str] | None:
+    """Return a relative-import level and module, or reject invalid syntax."""
+    level = len(raw_module) - len(raw_module.lstrip("."))
+    module = raw_module[level:]
+    if not module:
+        return (level, module) if level else None
+    if any(
+        not component.isidentifier() or keyword.iskeyword(component)
+        for component in module.split(".")
+    ):
+        return None
+    return level, module
+
+
+def _clean_import_line(line: str) -> str:
+    """Remove a Python comment from one import line."""
+    return line.split("#", 1)[0].rstrip()
+
+
+def _remove_line_continuation(line: str) -> str:
+    """Remove a trailing explicit line-continuation marker."""
+    return line[:-1].rstrip() if line.endswith("\\") else line
+
+
+def _is_import_name(token: tokenize.TokenInfo) -> bool:
+    """Return whether a token is a non-keyword Python import name."""
+    return token.type == tokenize.NAME and not keyword.iskeyword(token.string)
+
+
+def _parse_import_symbol(raw_symbol: str) -> str | None:
+    """Return a valid imported name, alias target, or wildcard."""
+    try:
+        tokens = [
+            token
+            for token in tokenize.generate_tokens(io.StringIO(raw_symbol).readline)
+            if token.type not in {tokenize.ENDMARKER, tokenize.NEWLINE, tokenize.NL}
+        ]
+    except (IndentationError, tokenize.TokenError):
+        return None
+    if len(tokens) == 1:
+        token = tokens[0]
+        if token.type == tokenize.OP and token.string == "*":
+            return "*"
+        return token.string if _is_import_name(token) else None
+    if (
+        len(tokens) == 3
+        and _is_import_name(tokens[0])
+        and tokens[1].type == tokenize.NAME
+        and tokens[1].string == "as"
+        and _is_import_name(tokens[2])
+    ):
+        return tokens[0].string
+    return None
+
+
+def _consume_import_continuation(
+    lines: list[str],
+    line_index: int,
+    raw_symbols: str,
+) -> tuple[str, int, bool]:
+    """Consume continued import symbols and report whether they are complete."""
+    continued = raw_symbols.endswith("\\")
+    raw_symbols = _remove_line_continuation(raw_symbols)
+    balance = raw_symbols.count("(") - raw_symbols.count(")")
+    while (balance > 0 or continued) and line_index + 1 < len(lines):
+        line_index += 1
+        continuation = _clean_import_line(lines[line_index])
+        continued = continuation.endswith("\\")
+        continuation = _remove_line_continuation(continuation)
+        raw_symbols = f"{raw_symbols} {continuation}"
+        balance += continuation.count("(") - continuation.count(")")
+    return raw_symbols, line_index, balance <= 0 and not continued
+
+
+def _fallback_import_references(
+    lines: list[str], line_index: int
+) -> tuple[int, list[ImportReference]] | None:
+    """Parse one fallback from-import and return its final line index."""
+    line = _clean_import_line(lines[line_index])
+    parts = line.lstrip().split(None, 3)
+    if len(parts) != 4 or parts[0] != "from" or parts[2] != "import":
+        return None
+    parsed_module = _parse_import_module(parts[1])
+    raw_symbols, end_line, complete = _consume_import_continuation(
+        lines, line_index, parts[3]
+    )
+    if parsed_module is None or not complete:
+        return end_line, []
+    level, module = parsed_module
+    symbols = raw_symbols.strip()
+    if symbols.startswith("(") and symbols.endswith(")"):
+        symbols = symbols[1:-1]
+    references = []
+    for raw_symbol in symbols.split(","):
+        symbol = _parse_import_symbol(raw_symbol.strip())
+        if symbol is not None:
+            references.append(_from_import_reference(module, symbol, level))
+    return end_line, references
+
+
+def _extract_import_pairs_fallback(source: str) -> list[ImportReference]:
+    """Extract from-import references from syntax-invalid source."""
     references: list[ImportReference] = []
-    for match in _FROM_IMPORT_RE.finditer(source):
-        raw_module = match.group(1).strip()
-        level = len(raw_module) - len(raw_module.lstrip("."))
-        module = raw_module[level:]
-        symbols = match.group(2).strip().strip("()")
-        for raw_symbol in symbols.split(","):
-            symbol = raw_symbol.strip().split(" as ")[0].strip()
-            if symbol:
-                references.append(_from_import_reference(module, symbol, level))
+    lines = source.splitlines()
+    line_index = 0
+    while line_index < len(lines):
+        parsed = _fallback_import_references(lines, line_index)
+        if parsed is None:
+            line_index += 1
+            continue
+        end_line, import_references = parsed
+        references.extend(import_references)
+        line_index = end_line + 1
     return references
 
 
 def _extract_import_pairs(source: str) -> list[ImportReference]:
-    """Extract import references using the AST or regex fallback."""
+    """Extract import references using the AST or line-based fallback."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return _extract_import_pairs_regex(source)
+        return _extract_import_pairs_fallback(source)
     references: list[ImportReference] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

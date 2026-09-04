@@ -1,5 +1,6 @@
-import primary, { named, original as alias } from "./esm";
-import * as toolkit from "./toolkit";
+import primary from "./esm";
+export { named, original as alias } from "./esm";
+export * as toolkit from "./toolkit";
 import "./setup";
 const { read, write: save } = require("./fs");
 const member = require("./config").value;
@@ -9,4 +10,4 @@ const lazy = import("./lazy");
 export { alpha, beta as renamed } from "./source";
 export * from "./all";
 export * as namespace from "./namespace";
-export { primary, named, alias, toolkit, read, save, member, library, lazy };
+export { primary, read, save, member, library, lazy };

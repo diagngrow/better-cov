@@ -113,8 +113,9 @@ def test_format_markdown_report_handles_no_functions_and_top_n(capsys) -> None:
     assert "Functions  : 0" in capsys.readouterr().out
 
 
-def test_export_json_and_markdown_create_parent_directories(tmp_path) -> None:
+def test_export_json_and_markdown_create_parent_directories(tmp_path, monkeypatch) -> None:
     """Verify JSON and Markdown exports create parent directories and preserve report data."""
+    monkeypatch.chdir(tmp_path)
     function = make_function(line_rate=0.5, importance=0.75)
     function.indicator_scores = {"import_count": 0.75}
     result = make_result(score=0.75, functions=[function])
@@ -130,3 +131,58 @@ def test_export_json_and_markdown_create_parent_directories(tmp_path) -> None:
     assert data["config"]["total_functions"] == 1
     assert data["functions"][0]["function"] == "run"
     assert "## 📊 Weighted Coverage Report" in markdown_path.read_text(encoding="utf-8")
+
+
+def test_export_markdown_rejects_paths_outside_the_working_directory(
+    tmp_path, monkeypatch
+) -> None:
+    """Verify Markdown exports cannot write outside the working directory."""
+    monkeypatch.chdir(tmp_path)
+    result = make_result()
+    output_path = tmp_path.parent / "report.md"
+
+    with pytest.raises(ValueError, match="current working directory"):
+        export_markdown(result, output_path)
+
+
+def test_export_json_rejects_paths_outside_the_working_directory(
+    tmp_path, monkeypatch
+) -> None:
+    """Verify JSON exports cannot write outside the working directory."""
+    monkeypatch.chdir(tmp_path)
+    result = make_result()
+    output_path = tmp_path.parent / "report.json"
+
+    with pytest.raises(ValueError, match="current working directory"):
+        export_json(result, output_path)
+
+
+def test_export_json_rejects_symlinked_parent_directory(tmp_path, monkeypatch) -> None:
+    """Verify JSON exports do not follow symlinked parent directories."""
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    result = make_result()
+    output_path = link / "report.json"
+
+    with pytest.raises(ValueError, match="symbolic links"):
+        export_json(result, output_path)
+
+    assert not (target / "report.json").exists()
+
+
+def test_export_markdown_rejects_symlinked_output_file(tmp_path, monkeypatch) -> None:
+    """Verify Markdown exports do not overwrite a symlink target."""
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "target.md"
+    target.write_text("original", encoding="utf-8")
+    link = tmp_path / "report.md"
+    link.symlink_to(target)
+    result = make_result()
+
+    with pytest.raises(ValueError, match="symbolic links"):
+        export_markdown(result, link)
+
+    assert target.read_text(encoding="utf-8") == "original"

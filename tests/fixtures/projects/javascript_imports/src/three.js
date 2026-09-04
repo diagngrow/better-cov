@@ -1,2 +1,1 @@
-import * as module from "./module.js";
-export { module };
+export * as module from "./module.js";

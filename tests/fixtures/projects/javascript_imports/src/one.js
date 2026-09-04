@@ -1,2 +1,1 @@
-import { first, second as localSecond } from "./module";
-export { first, localSecond };
+export { first, second as localSecond } from "./module";

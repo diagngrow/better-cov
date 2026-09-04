@@ -1,2 +1,1 @@
-import { first } from "./module.js";
-export { first };
+export { first } from "./module.js";
