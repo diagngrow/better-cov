@@ -23,6 +23,50 @@ def test_python_fallback_parses_imports_without_regex_backtracking() -> None:
     ]
 
 
+def test_python_fallback_parses_parenthesized_multiline_imports() -> None:
+    """Verify syntax-invalid Python preserves parenthesized from-imports."""
+    source = (
+        "from package.module import (\n"
+        "    first as alias,\n"
+        "    second,\n"
+        ")\n"
+        "def broken(:\n"
+    )
+
+    references = PythonLanguageAdapter().extract_imports(source, ".py")
+
+    assert [
+        (reference.module, reference.symbols, reference.level)
+        for reference in references
+    ] == [
+        ("package.module", ("first",), 0),
+        ("package.module", ("second",), 0),
+    ]
+
+
+def test_python_fallback_validates_modules_and_strips_comments() -> None:
+    """Verify invalid module names are skipped and inline comments are removed."""
+    source = (
+        "from package import first, second  # note\n"
+        "from . import sibling\n"
+        "from 123 import numeric\n"
+        "from package..submodule import invalid\n"
+        "from package. import trailing\n"
+        "def broken(:\n"
+    )
+
+    references = PythonLanguageAdapter().extract_imports(source, ".py")
+
+    assert [
+        (reference.module, reference.symbols, reference.level)
+        for reference in references
+    ] == [
+        ("package", ("first",), 0),
+        ("package", ("second",), 0),
+        ("sibling", (), 1),
+    ]
+
+
 def test_compute_counts_and_normalizes_imports() -> None:
     """Verify imports are counted per symbol and normalized against the maximum count."""
     source_dir = _FIXTURES / "projects" / "python_project" / "src"

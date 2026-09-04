@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import keyword
 from pathlib import Path
 
 from better_cov.languages.base import (
@@ -10,10 +11,6 @@ from better_cov.languages.base import (
     ImportReference,
     LanguageAdapter,
     source_file_index,
-)
-
-_IMPORT_MODULE_CHARS = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_."
 )
 
 
@@ -61,25 +58,60 @@ def _from_import_reference(
     return ImportReference(symbol, level=level)
 
 
+def _parse_import_module(raw_module: str) -> tuple[int, str] | None:
+    """Return a relative-import level and module, or reject invalid syntax."""
+    level = len(raw_module) - len(raw_module.lstrip("."))
+    module = raw_module[level:]
+    if not module:
+        return (level, module) if level else None
+    if any(
+        not component.isidentifier() or keyword.iskeyword(component)
+        for component in module.split(".")
+    ):
+        return None
+    return level, module
+
+
+def _clean_import_line(line: str) -> str:
+    """Remove a Python comment from one import line."""
+    return line.split("#", 1)[0].rstrip()
+
+
+def _remove_line_continuation(line: str) -> str:
+    """Remove a trailing explicit line-continuation marker."""
+    return line[:-1].rstrip() if line.endswith("\\") else line
+
+
 def _extract_import_pairs_fallback(source: str) -> list[ImportReference]:
     """Extract from-import references from syntax-invalid source."""
     references: list[ImportReference] = []
-    for line in source.splitlines():
+    lines = source.splitlines()
+    line_index = 0
+    while line_index < len(lines):
+        line = _clean_import_line(lines[line_index])
         parts = line.lstrip().split(None, 3)
         if len(parts) != 4 or parts[0] != "from" or parts[2] != "import":
+            line_index += 1
             continue
-        raw_module, raw_symbols = parts[1], parts[3]
-        if not raw_module or any(
-            char not in _IMPORT_MODULE_CHARS for char in raw_module
-        ):
-            continue
-        level = len(raw_module) - len(raw_module.lstrip("."))
-        module = raw_module[level:]
-        symbols = raw_symbols.strip().strip("()")
-        for raw_symbol in symbols.split(","):
-            symbol = raw_symbol.strip().split(" as ")[0].strip()
-            if symbol:
-                references.append(_from_import_reference(module, symbol, level))
+        parsed_module = _parse_import_module(parts[1])
+        continued = parts[3].endswith("\\")
+        raw_symbols = _remove_line_continuation(parts[3])
+        balance = raw_symbols.count("(") - raw_symbols.count(")")
+        while (balance > 0 or continued) and line_index + 1 < len(lines):
+            line_index += 1
+            continuation = _clean_import_line(lines[line_index])
+            continued = continuation.endswith("\\")
+            continuation = _remove_line_continuation(continuation)
+            raw_symbols = f"{raw_symbols} {continuation}"
+            balance += continuation.count("(") - continuation.count(")")
+        if parsed_module is not None and balance <= 0 and not continued:
+            level, module = parsed_module
+            symbols = raw_symbols.strip().strip("()")
+            for raw_symbol in symbols.split(","):
+                symbol = raw_symbol.strip().split(" as ", 1)[0].strip()
+                if symbol:
+                    references.append(_from_import_reference(module, symbol, level))
+        line_index += 1
     return references
 
 
