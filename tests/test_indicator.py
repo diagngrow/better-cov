@@ -23,6 +23,27 @@ def test_python_fallback_parses_imports_without_regex_backtracking() -> None:
     ]
 
 
+def test_python_fallback_validates_symbol_tokens() -> None:
+    """Verify fallback keeps only valid names, aliases, and wildcards."""
+    source = (
+        "from package.module import "
+        "first\tas\talias, second, *, 123, first as, "
+        "first as alias extra, first second\n"
+        "def broken(:\n"
+    )
+
+    references = PythonLanguageAdapter().extract_imports(source, ".py")
+
+    assert [
+        (reference.module, reference.symbols, reference.level)
+        for reference in references
+    ] == [
+        ("package.module", ("first",), 0),
+        ("package.module", ("second",), 0),
+        ("package.module", ("*",), 0),
+    ]
+
+
 def test_python_fallback_parses_parenthesized_multiline_imports() -> None:
     """Verify syntax-invalid Python preserves parenthesized from-imports."""
     source = (

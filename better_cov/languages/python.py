@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
+import io
 import keyword
+import tokenize
 from pathlib import Path
 
 from better_cov.languages.base import (
@@ -82,6 +84,37 @@ def _remove_line_continuation(line: str) -> str:
     return line[:-1].rstrip() if line.endswith("\\") else line
 
 
+def _is_import_name(token: tokenize.TokenInfo) -> bool:
+    """Return whether a token is a non-keyword Python import name."""
+    return token.type == tokenize.NAME and not keyword.iskeyword(token.string)
+
+
+def _parse_import_symbol(raw_symbol: str) -> str | None:
+    """Return a valid imported name, alias target, or wildcard."""
+    try:
+        tokens = [
+            token
+            for token in tokenize.generate_tokens(io.StringIO(raw_symbol).readline)
+            if token.type not in {tokenize.ENDMARKER, tokenize.NEWLINE, tokenize.NL}
+        ]
+    except (IndentationError, tokenize.TokenError):
+        return None
+    if len(tokens) == 1:
+        token = tokens[0]
+        if token.type == tokenize.OP and token.string == "*":
+            return "*"
+        return token.string if _is_import_name(token) else None
+    if (
+        len(tokens) == 3
+        and _is_import_name(tokens[0])
+        and tokens[1].type == tokenize.NAME
+        and tokens[1].string == "as"
+        and _is_import_name(tokens[2])
+    ):
+        return tokens[0].string
+    return None
+
+
 def _extract_import_pairs_fallback(source: str) -> list[ImportReference]:
     """Extract from-import references from syntax-invalid source."""
     references: list[ImportReference] = []
@@ -106,10 +139,12 @@ def _extract_import_pairs_fallback(source: str) -> list[ImportReference]:
             balance += continuation.count("(") - continuation.count(")")
         if parsed_module is not None and balance <= 0 and not continued:
             level, module = parsed_module
-            symbols = raw_symbols.strip().strip("()")
+            symbols = raw_symbols.strip()
+            if symbols.startswith("(") and symbols.endswith(")"):
+                symbols = symbols[1:-1]
             for raw_symbol in symbols.split(","):
-                symbol = raw_symbol.strip().split(" as ", 1)[0].strip()
-                if symbol:
+                symbol = _parse_import_symbol(raw_symbol.strip())
+                if symbol is not None:
                     references.append(_from_import_reference(module, symbol, level))
         line_index += 1
     return references
