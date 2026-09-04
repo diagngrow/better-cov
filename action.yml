@@ -40,7 +40,7 @@ runs:
   steps:
     - name: Install better-cov
       shell: bash
-      run: "pip install --only-binary :all: better-cov==0.2.0"
+      run: "pip install --only-binary :all: better-cov==0.3.0 tree-sitter==0.25.2"
     - name: Run better-cov
       shell: bash
       env:
@@ -75,7 +75,7 @@ runs:
         name: better-cov-report
         path: ${{ inputs.output }}
     - name: Find existing coverage comment
-      if: inputs.pr-comment == 'true' && github.event_name == 'pull_request'
+      if: always() && inputs.pr-comment == 'true' && github.event_name == 'pull_request'
       id: find-comment
       uses: peter-evans/find-comment@v3
       with:
@@ -83,7 +83,7 @@ runs:
         comment-author: github-actions[bot]
         body-includes: "<!-- better-cov-report -->"
     - name: Post PR comment
-      if: inputs.pr-comment == 'true' && github.event_name == 'pull_request'
+      if: always() && inputs.pr-comment == 'true' && github.event_name == 'pull_request'
       uses: peter-evans/create-or-update-comment@v4
       with:
         issue-number: ${{ github.event.pull_request.number }}
