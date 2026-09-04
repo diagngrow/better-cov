@@ -115,38 +115,64 @@ def _parse_import_symbol(raw_symbol: str) -> str | None:
     return None
 
 
+def _consume_import_continuation(
+    lines: list[str],
+    line_index: int,
+    raw_symbols: str,
+) -> tuple[str, int, bool]:
+    """Consume continued import symbols and report whether they are complete."""
+    continued = raw_symbols.endswith("\\")
+    raw_symbols = _remove_line_continuation(raw_symbols)
+    balance = raw_symbols.count("(") - raw_symbols.count(")")
+    while (balance > 0 or continued) and line_index + 1 < len(lines):
+        line_index += 1
+        continuation = _clean_import_line(lines[line_index])
+        continued = continuation.endswith("\\")
+        continuation = _remove_line_continuation(continuation)
+        raw_symbols = f"{raw_symbols} {continuation}"
+        balance += continuation.count("(") - continuation.count(")")
+    return raw_symbols, line_index, balance <= 0 and not continued
+
+
+def _fallback_import_references(
+    lines: list[str], line_index: int
+) -> tuple[int, list[ImportReference]] | None:
+    """Parse one fallback from-import and return its final line index."""
+    line = _clean_import_line(lines[line_index])
+    parts = line.lstrip().split(None, 3)
+    if len(parts) != 4 or parts[0] != "from" or parts[2] != "import":
+        return None
+    parsed_module = _parse_import_module(parts[1])
+    raw_symbols, end_line, complete = _consume_import_continuation(
+        lines, line_index, parts[3]
+    )
+    if parsed_module is None or not complete:
+        return end_line, []
+    level, module = parsed_module
+    symbols = raw_symbols.strip()
+    if symbols.startswith("(") and symbols.endswith(")"):
+        symbols = symbols[1:-1]
+    references = []
+    for raw_symbol in symbols.split(","):
+        symbol = _parse_import_symbol(raw_symbol.strip())
+        if symbol is not None:
+            references.append(_from_import_reference(module, symbol, level))
+    return end_line, references
+
+
 def _extract_import_pairs_fallback(source: str) -> list[ImportReference]:
     """Extract from-import references from syntax-invalid source."""
     references: list[ImportReference] = []
     lines = source.splitlines()
     line_index = 0
     while line_index < len(lines):
-        line = _clean_import_line(lines[line_index])
-        parts = line.lstrip().split(None, 3)
-        if len(parts) != 4 or parts[0] != "from" or parts[2] != "import":
+        parsed = _fallback_import_references(lines, line_index)
+        if parsed is None:
             line_index += 1
             continue
-        parsed_module = _parse_import_module(parts[1])
-        continued = parts[3].endswith("\\")
-        raw_symbols = _remove_line_continuation(parts[3])
-        balance = raw_symbols.count("(") - raw_symbols.count(")")
-        while (balance > 0 or continued) and line_index + 1 < len(lines):
-            line_index += 1
-            continuation = _clean_import_line(lines[line_index])
-            continued = continuation.endswith("\\")
-            continuation = _remove_line_continuation(continuation)
-            raw_symbols = f"{raw_symbols} {continuation}"
-            balance += continuation.count("(") - continuation.count(")")
-        if parsed_module is not None and balance <= 0 and not continued:
-            level, module = parsed_module
-            symbols = raw_symbols.strip()
-            if symbols.startswith("(") and symbols.endswith(")"):
-                symbols = symbols[1:-1]
-            for raw_symbol in symbols.split(","):
-                symbol = _parse_import_symbol(raw_symbol.strip())
-                if symbol is not None:
-                    references.append(_from_import_reference(module, symbol, level))
-        line_index += 1
+        end_line, import_references = parsed
+        references.extend(import_references)
+        line_index = end_line + 1
     return references
 
 
